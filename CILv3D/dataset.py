@@ -54,17 +54,17 @@ class CarlaDataset(Dataset):
 
   @staticmethod
   def _construct_input_dict(
-    left_image: torch.Tensor,
-    front_image: torch.Tensor,
-    right_image: torch.Tensor,
+    left_images: torch.Tensor,
+    front_images: torch.Tensor,
+    right_images: torch.Tensor,
     states: torch.Tensor,
     commands: torch.Tensor,
     targets: torch.Tensor,
   ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
     inputs = {
-      "rgb_left": left_image,
-      "rgb_front": front_image,
-      "rgb_right": right_image,
+      "rgb_left": left_images,
+      "rgb_front": front_images,
+      "rgb_right": right_images,
       "states": states,
       "commands": commands
     }
@@ -140,29 +140,45 @@ class CarlaDataset(Dataset):
     assert len(self.left_images) == len(self.front_images) == len(self.right_images) == len(self.states) == len(self.commands)
 
   def __len__(self):
-    return len(self.states)
+    return len(self.states) - SEQUENCE_SIZE+1
 
-  # TODO: sequence size
   def __getitem__(self, idx):
-    left_image = self.load_image(self.left_images[idx])
-    front_image = self.load_image(self.front_images[idx])
-    right_image = self.load_image(self.right_images[idx])
-    states = torch.tensor(self.states[idx], dtype=torch.float32)
-    commands = torch.tensor(self.commands[idx], dtype=torch.float32)
-    targets = torch.tensor(self.targets[idx], dtype=torch.float32)
+    left_images = []
+    front_images = []
+    right_images = []
+    states = []
+    commands = []
+    targets = []
 
-    mean = torch.tensor(self._imagenet_mean, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
-    std = torch.tensor(self._imagenet_std, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
+    for i in range(SEQUENCE_SIZE):
+      left_image = self.load_image(self.left_images[idx+i])
+      front_image = self.load_image(self.front_images[idx+i])
+      right_image = self.load_image(self.right_images[idx+i])
 
-    if self.use_imagenet_norm:
-      left_image = (left_image - mean) / std
-      front_image = (front_image - mean) / std
-      right_image = (right_image - mean) / std
+      mean = torch.tensor(self._imagenet_mean, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
+      std = torch.tensor(self._imagenet_std, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
+
+      if self.use_imagenet_norm:
+        left_image = (left_image - mean) / std
+        front_image = (front_image - mean) / std
+        right_image = (right_image - mean) / std
+
+      left_images.append(left_image)
+      front_images.append(front_image)
+      right_images.append(right_image)
+
+    left_images = torch.stack(left_images, dim=0)
+    front_images = torch.stack(front_images, dim=0)
+    right_images = torch.stack(right_images, dim=0)
+
+    states = torch.tensor(self.states[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
+    commands = torch.tensor(self.commands[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
+    targets = torch.tensor(self.targets[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
 
     inputs, targets = CarlaDataset._construct_input_dict(
-      left_image=left_image,
-      front_image=front_image,
-      right_image=right_image,
+      left_images=left_images,
+      front_images=front_images,
+      right_images=right_images,
       states=states,
       commands=commands,
       targets=targets

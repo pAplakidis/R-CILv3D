@@ -15,8 +15,7 @@ class CILv3DConfig:
   transformer_heads: int = 8
   transformer_layers: int = 6
   filters_1d: int = 32
-  filters_3d: int = 512
-  embedding_size: int = 512
+  embedding_size: int = 512 * 3
   freeze_backbone: bool = True
 
 
@@ -28,7 +27,6 @@ class CILv3D(nn.Module):
     self.state_size = cfg.state_size
     self.command_size = cfg.command_size
     self.filters_1d = cfg.filters_1d
-    self.filters_3d = cfg.filters_3d
     self.embedding_size = cfg.embedding_size
     self.transformer_heads = cfg.transformer_heads
     self.transformer_layers = cfg.transformer_layers
@@ -61,9 +59,31 @@ class CILv3D(nn.Module):
 
     self.linear = nn.Linear(self.embedding_size, 2)
 
-  def forward(self, x, states, commands):
+  @staticmethod
+  def positional_encoding(length: int, depth: int) -> torch.Tensor:
+    assert depth % 2 == 0, "Depth must be even."
+    half_depth = depth // 2
+
+    positions = torch.arange(length, dtype=torch.float32).unsqueeze(1)       # (seq, 1)
+    depths = torch.arange(half_depth, dtype=torch.float32).unsqueeze(0) / half_depth  # (1, depth/2)
+
+    angle_rates = 1 / (10000 ** depths)                                      # (1, depth/2)
+    angle_rads = positions * angle_rates                                     # (seq, depth/2)
+
+    pos_encoding = torch.cat([torch.sin(angle_rads), torch.cos(angle_rads)], dim=-1)
+    return pos_encoding.unsqueeze(0)                                         # (1, seq, depth)
+
+
+  def forward(
+      self,
+      left_img: torch.Tensor,
+      front_img: torch.Tensor,
+      right_img: torch.Tensor,
+      states: torch.Tensor,
+      commands: torch.Tensor
+  ) -> torch.Tensor:
     """
-    x: (B, C, T, H, W)
+    left: (B, C, T, H, W)
     states: (B, sequence_size, state_size)
     commands: (B, sequence_size, command_size)
     """
@@ -72,10 +92,19 @@ class CILv3D(nn.Module):
     command_emb = self.command_embedding(commands)
     control_embedding = state_emb + command_emb
 
-    # TODO: add positional embeddings (?)
-    vision_embeddings, y = self.uniformer(x)
+    vision_emb_left, _ = self.uniformer(left_img)
+    vision_emb_front, _ = self.uniformer(front_img)
+    vision_emb_right, _ = self.uniformer(right_img)
+
+    # NOTE: uniformer returns a tuple (features, layerout), where:
     # layerout = y[-1] # B, C, T, H, W
     # layerout = layerout[0].detach().cpu().permute(1, 2, 3, 0)
+
+    vision_embeddings = torch.cat([vision_emb_left, vision_emb_front, vision_emb_right], dim=1)  # (B, C, T, H, W)
+    positional_embeddings = self.positional_encoding(length=2, depth=vision_embeddings.shape[-1]) # FIXME: length should be seq_size, wrong shape output
+    print(vision_embeddings.shape, positional_embeddings.shape)
+    vision_embeddings = vision_embeddings + positional_embeddings
+    print(vision_embeddings.shape)
 
     z = vision_embeddings + control_embedding
     out = self.linear(self.transformer_encoder(z))
@@ -87,9 +116,11 @@ if __name__ == "__main__":
   print(model)
 
   bs = 2
-  # FIXME: we have 3 images per time step
+  # TODO:
+  # option1: pass each view through uniformer, then flatten + concatenate
+  # option2: retrain from scratch with 3 * 3 channels
   vid = torch.randn(bs, 3, SEQUENCE_SIZE, IMAGE_SIZE[0], IMAGE_SIZE[1])  # B, C, T, H, W
   states = torch.randn(bs, SEQUENCE_SIZE, 7) # B, T, S
   commands = torch.randn(bs, SEQUENCE_SIZE, 6) # B, T, C
-  out = model(vid, states, commands)
+  out = model(vid, vid, vid, states, commands)
   print(out.shape)
