@@ -9,9 +9,11 @@ from dataset import *
 from cilv3d import CILv3D
 from trainer import Trainer
 
-N_WORKERS = PREFETCH_FACTOR = psutil.cpu_count(logical=False)
+N_WORKERS = psutil.cpu_count(logical=False)
+PREFETCH_FACTOR = psutil.cpu_count(logical=False) // 2
 
-MODEL_PATH = os.getenv("DEBUG", "checkpoints/CILv3D/CILv3D.pt")
+MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/CILv3D/CILv3D.pt")
+CHECKPOINT = os.getenv("CHECKPOINT", None)
 
 
 if __name__ == "__main__":
@@ -19,6 +21,12 @@ if __name__ == "__main__":
   print("[+] Using device:", device)
 
   os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+  print("\n[*] Configuration:")
+  print(f"Model path: {MODEL_PATH}")
+  print(f"Checkpoint path: {CHECKPOINT}")
+  print(f"Epochs: {EPOCHS} - Batch size: {BATCH_SIZE} - Learning rate: {LR} - Weight decay: {WEIGHT_DECAY}")
+  print(f"Number of workers: {N_WORKERS} - Prefetch factor: {PREFETCH_FACTOR}")
+  print()
 
   train_set = CarlaDataset(
     base_dir=DATA_DIR,
@@ -40,10 +48,13 @@ if __name__ == "__main__":
   val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False,
                           prefetch_factor=PREFETCH_FACTOR, num_workers=N_WORKERS, pin_memory=True)
 
-  torch.set_float32_matmul_precision('high')
+  # torch.set_float32_matmul_precision('high')
   model = CILv3D(device=device)
+  if CHECKPOINT:
+    print(f"[+] Loading checkpoint from {CHECKPOINT}")
+    model.load_state_dict(torch.load(CHECKPOINT))
   model.to(device)
-  model = torch.compile(model)
+  # model = torch.compile(model)
 
   trainer = Trainer(device, model, MODEL_PATH, train_loader, val_loader,
                     eval_epoch=True, save_checkpoints=True)

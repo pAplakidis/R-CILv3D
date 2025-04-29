@@ -120,7 +120,6 @@ class Trainer:
   def eval(self, loss_func, epoch_vlosses):
     with torch.no_grad():
       self.model.eval()
-      print("[*] Evaluating...")
       try:
         for i_batch, sample_batched in enumerate((t := tqdm(self.val_loader))):
           self.eval_step(t, i_batch, sample_batched, loss_func, epoch_vlosses)

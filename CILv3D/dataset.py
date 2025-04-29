@@ -140,7 +140,7 @@ class CarlaDataset(Dataset):
     assert len(self.left_images) == len(self.front_images) == len(self.right_images) == len(self.states) == len(self.commands)
 
   def __len__(self):
-    return len(self.states) - SEQUENCE_SIZE+1
+    return len(self.states) - SEQUENCE_SIZE
 
   def __getitem__(self, idx):
     left_images = []

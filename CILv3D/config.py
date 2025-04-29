@@ -1,4 +1,4 @@
-DATA_DIR = "/media/paul/SSD1/Datasets/TeslaPilot/storage/datasets/carla"
+DATA_DIR = "/media/paul/SSD/Datasets/TeslaPilot/storage/datasets/carla"
 
 TRAIN_TOWN_LIST = ["Town01", "Town02", "Town03", "Town04", "Town05", "Town10HD"]
 EVAL_TOWN_LIST = ["Town06", "Town07"]
@@ -10,5 +10,5 @@ STATE_NOISE = True
 
 EPOCHS = 100
 BATCH_SIZE = 32
-LR = 1e-4
+LR = 1e-4 # TODO: smaller value
 WEIGHT_DECAY = 1e-4
