@@ -173,7 +173,7 @@ class CarlaDataset(Dataset):
 
     states = torch.tensor(self.states[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
     commands = torch.tensor(self.commands[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
-    targets = torch.tensor(self.targets[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
+    targets = torch.tensor(self.targets[idx+SEQUENCE_SIZE], dtype=torch.float32)
 
     inputs, targets = CarlaDataset._construct_input_dict(
       left_images=left_images,

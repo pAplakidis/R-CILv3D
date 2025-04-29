@@ -47,11 +47,13 @@ class Trainer:
     print(f"[+] Checkpoint saved at {chpt_path}. New min eval loss {min_loss}")
 
   def train_step(self, t, i_batch, sample_batched, loss_func, optim, epoch_losses):
-    X = sample_batched[0]["x"].to(self.device)
+    LEFT = sample_batched[0]["rgb_left"].permute(0, 2, 1, 3, 4).to(self.device)
+    FRONT = sample_batched[0]["rgb_front"].permute(0, 2, 1, 3, 4).to(self.device)
+    RIGHT = sample_batched[0]["rgb_right"].permute(0, 2, 1, 3, 4).to(self.device)
     STATES = sample_batched[0]["states"].to(self.device)
     COMMANDS = sample_batched[0]["commands"].to(self.device)
     Y = sample_batched[1].to(self.device)
-    out = self.model(X, STATES, COMMANDS)
+    out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
     optim.zero_grad()
     loss = loss_func(out, Y).mean()
@@ -102,11 +104,13 @@ class Trainer:
     print(f"[+] Model saved at {self.model_path}")
 
   def eval_step(self, t, i_batch, sample_batched, loss_func, epoch_vlosses):
-    X = sample_batched[0]["x"].to(self.device)
+    LEFT = sample_batched[0]["rgb_left"].permute(0, 2, 1, 3, 4).to(self.device)
+    FRONT = sample_batched[0]["rgb_front"].permute(0, 2, 1, 3, 4).to(self.device)
+    RIGHT = sample_batched[0]["rgb_right"].permute(0, 2, 1, 3, 4).to(self.device)
     STATES = sample_batched[0]["states"].to(self.device)
     COMMANDS = sample_batched[0]["commands"].to(self.device)
     Y = sample_batched[1].to(self.device)
-    out = self.model(X, STATES, COMMANDS)
+    out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
     loss = loss_func(out, Y).mean()
     self.writer.add_scalar("running loss", loss.item(), i_batch)
