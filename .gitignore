@@ -1,4 +1,4 @@
 .*.swp
 **/__pycache__/
 venv/
-./CILv3D/checkpoints/
+CILv3D/checkpoints/

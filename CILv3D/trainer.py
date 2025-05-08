@@ -33,11 +33,12 @@ class Trainer:
     self.eval_epoch = eval_epoch
     self.skip_training = skip_training
     self.save_checkpoints = save_checkpoints
+    self.scheduler = None
 
     if not writer_path:
       today = str(datetime.now()).replace(" ", "_")
       auto_name = "-".join([model_path.split('/')[-1].split('.')[0], today, f"lr_{LR}", f"bs_{BATCH_SIZE}"])
-      writer_path = "runs/" + auto_name
+      writer_path = str("runs/" + auto_name).replace(":", "_")
     print("[*] Tensorboard output path:", writer_path)
     self.writer = SummaryWriter(writer_path)
 
@@ -46,7 +47,7 @@ class Trainer:
     torch.save(self.model.state_dict(), chpt_path)
     print(f"[+] Checkpoint saved at {chpt_path}. New min eval loss {min_loss}")
 
-  def train_step(self, t, i_batch, sample_batched, loss_func, optim, epoch_losses):
+  def train_step(self, t, step, sample_batched, loss_func, optim, epoch_losses):
     LEFT = sample_batched[0]["rgb_left"].permute(0, 2, 1, 3, 4).to(self.device)
     FRONT = sample_batched[0]["rgb_front"].permute(0, 2, 1, 3, 4).to(self.device)
     RIGHT = sample_batched[0]["rgb_right"].permute(0, 2, 1, 3, 4).to(self.device)
@@ -56,29 +57,37 @@ class Trainer:
     out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
     optim.zero_grad()
+    steer_loss = loss_func(out[:, 0], Y[:, 0]).mean().item()
+    accel_loss = loss_func(out[:, 1], Y[:, 1]).mean().item()
     loss = loss_func(out, Y).mean()
     loss.backward()
     optim.step()
 
-    self.writer.add_scalar("running loss", loss.item(), i_batch)
+    self.writer.add_scalar("running loss", loss.item(), step)
     epoch_losses.append(loss.item())
-    t.set_description(f"[train] Batch loss: {loss.item():.4f}")
+    # TODO: averages per epoch
+    self.writer.add_scalar("steer loss", steer_loss, step)
+    self.writer.add_scalar("accel loss", accel_loss, step)
+    t.set_description(f"[train] Batch loss: {loss.item():.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
 
   def train(self):
     loss_func = nn.L1Loss()
-    optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=0.1, patience=5, verbose=True)
     losses, vlosses = [], []
 
     try:
-      print("[*] Training...")
       min_epoch_vloss = float("inf")
+      step = 0
+      print("[*] Training...")
       for epoch in range(EPOCHS):
         self.model.train()
         print(f"\n[=>] Epoch {epoch+1}/{EPOCHS}")
         epoch_losses, epoch_vlosses = [], []
 
         for i_batch, sample_batched in enumerate((t := tqdm(self.train_loader))):
-          self.train_step(t, i_batch, sample_batched, loss_func, optim, epoch_losses)
+          self.train_step(t, step, sample_batched, loss_func, self.optim, epoch_losses)
+          step += 1
 
         avg_epoch_loss = np.array(epoch_losses).mean()
         losses.append(avg_epoch_loss)
@@ -112,10 +121,18 @@ class Trainer:
     Y = sample_batched[1].to(self.device)
     out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
+    # TODO: averages per epoch
+    steer_loss = loss_func(out[:, 0], Y[:, 0]).mean().item()
+    accel_loss = loss_func(out[:, 1], Y[:, 1]).mean().item()
     loss = loss_func(out, Y).mean()
+
+    if self.scheduler:
+      self.scheduler.step(loss)
+      # print(f"LR: {self.optim.param_groups[0]['lr']}")
+
     self.writer.add_scalar("running loss", loss.item(), i_batch)
     epoch_vlosses.append(loss.item())
-    t.set_description(f"[val] Batch loss: {loss.item():.4f}")
+    t.set_description(f"[val] Batch loss: {loss.item():.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
 
   def eval(self, loss_func, epoch_vlosses):
     with torch.no_grad():

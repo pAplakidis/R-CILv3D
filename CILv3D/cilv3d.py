@@ -17,6 +17,7 @@ class CILv3DConfig:
   filters_1d: int = 32
   embedding_size: int = 512 #* 3
   freeze_backbone: bool = True
+  transformer_dropout: float = 0.4
 
 
 class CILv3D(nn.Module):
@@ -32,6 +33,7 @@ class CILv3D(nn.Module):
     self.transformer_heads = cfg.transformer_heads
     self.transformer_layers = cfg.transformer_layers
     self.freeze_backbone = cfg.freeze_backbone
+    self.transformer_dropout = cfg.transformer_dropout
 
     uniformer_state_dict = torch.load('models/state_dicts/uniformer_small_k400_16x8.pth', map_location='cpu')
     self.uniformer = uniformer_small()
@@ -45,22 +47,29 @@ class CILv3D(nn.Module):
     self.state_embedding = nn.Sequential(
       nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=1),
       nn.BatchNorm1d(self.filters_1d),
+      # nn.LayerNorm(self.filters_1d),
       nn.Flatten(),
       nn.Linear(self.filters_1d * self.state_size, self.embedding_size),
     )
     self.command_embedding = nn.Sequential(
       nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=1),
       nn.BatchNorm1d(self.filters_1d),
+      # nn.LayerNorm(self.filters_1d),
       nn.Flatten(),
       nn.Linear(self.filters_1d * self.command_size, self.embedding_size),
     )
 
-    encoder_layer = nn.TransformerEncoderLayer(d_model=self.embedding_size, nhead=self.transformer_heads)
+    self.layernorm = nn.LayerNorm(self.embedding_size)
+    encoder_layer = nn.TransformerEncoderLayer(
+      d_model=self.embedding_size,
+      nhead=self.transformer_heads,
+      dropout=self.transformer_dropout,
+      activation="gelu"
+    )
     self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=self.transformer_layers)
+    self.linear = nn.Linear(3 * self.embedding_size, 2)
 
-    self.linear = nn.Linear(self.embedding_size, 2)
-
-  def positional_encoding(self, length: int, depth: int) -> torch.Tensor:
+  def positional_encoding(self, batch_size: int, length: int, depth: int) -> torch.Tensor:
     assert depth % 2 == 0, "Depth must be even."
     half_depth = depth // 2
 
@@ -71,7 +80,7 @@ class CILv3D(nn.Module):
     angle_rads = positions * angle_rates                                     # (seq, depth/2)
 
     pos_encoding = torch.cat([torch.sin(angle_rads), torch.cos(angle_rads)], dim=-1)
-    return pos_encoding.unsqueeze(0).to(self.device)
+    return pos_encoding.repeat(batch_size, 1, 1).to(self.device)
 
   def forward(
       self,
@@ -100,27 +109,27 @@ class CILv3D(nn.Module):
     # layerout = y[-1] # B, C, T, H, W
     # layerout = layerout[0].detach().cpu().permute(1, 2, 3, 0)
 
-    # vision_embeddings = torch.cat([vision_emb_left, vision_emb_front, vision_emb_right], dim=1)  # (B, C, T, H, W)
-    vision_embeddings = torch.stack([vision_emb_left, vision_emb_front, vision_emb_right], dim=1)  # (B, 3, 1536)
-    positional_embeddings = self.positional_encoding(length=3, depth=vision_embeddings.shape[-1])
-    vision_embeddings = vision_embeddings + positional_embeddings
+    vision_embeddings = torch.cat([vision_emb_left.unsqueeze(1), vision_emb_front.unsqueeze(1), vision_emb_right.unsqueeze(1)], dim=1)  # (B, 3, 512)
+    positional_embeddings = self.positional_encoding(batch_size=vision_embeddings.shape[0], length=3, depth=vision_embeddings.shape[-1])
+    z = vision_embeddings + positional_embeddings + control_embedding
 
-    z = vision_embeddings + control_embedding
-    out = self.linear(self.transformer_encoder(z))
-    return out[:, 0, :] # (B, 2) TODO: is this correct?
+    transformer_out = self.transformer_encoder(self.layernorm(z)).flatten(1, 2)
+    out = self.linear(transformer_out)
+    return out
 
 
 if __name__ == "__main__":
-  model = CILv3D()
+  device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+  model = CILv3D(device).to(device)
   print(model)
 
   bs = 12
   # TODO:
   # option1: pass each view through uniformer, then flatten + concatenate
   # option2: retrain from scratch with 3 * 3 channels
-  vid = torch.randn(bs, 3, SEQUENCE_SIZE, IMAGE_SIZE[0], IMAGE_SIZE[1])  # B, C, T, H, W
+  vid = torch.randn(bs, 3, SEQUENCE_SIZE, IMAGE_SIZE[0], IMAGE_SIZE[1]).to(device)  # B, C, T, H, W
 
-  states = torch.randn(bs, SEQUENCE_SIZE, 7) # B, T, S
-  commands = torch.randn(bs, SEQUENCE_SIZE, 6) # B, T, C
+  states = torch.randn(bs, SEQUENCE_SIZE, 7).to(device)   # B, T, S
+  commands = torch.randn(bs, SEQUENCE_SIZE, 6).to(device) # B, T, C
   out = model(vid, vid, vid, states, commands)
   print(out.shape)

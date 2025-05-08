@@ -9,6 +9,6 @@ SEQUENCE_SIZE = 4
 STATE_NOISE = True
 
 EPOCHS = 100
-BATCH_SIZE = 32
-LR = 1e-4 # TODO: smaller value
+BATCH_SIZE = 64
+LR = 1e-4
 WEIGHT_DECAY = 1e-4
