@@ -18,7 +18,8 @@ class CarlaDataset(Dataset):
     townslist: Tuple[str],
     image_size: Tuple[int, int],
     use_imagenet_norm: bool,
-    sequence_size: Optional[int] = None
+    sequence_size: Optional[int] = None,
+    inference: bool = False
   ):
     super(CarlaDataset, self).__init__()
 
@@ -26,6 +27,7 @@ class CarlaDataset(Dataset):
     self.image_size = image_size
     self.use_imagenet_norm = use_imagenet_norm
     self.sequence_size = sequence_size
+    self.inference = inference
 
     self._states_size = None
     self._state_shape = None
@@ -69,6 +71,30 @@ class CarlaDataset(Dataset):
       "commands": commands
     }
     return inputs, targets
+
+  @staticmethod
+  def _construct_input_dict_inference(
+    left_images: torch.Tensor,
+    front_images: torch.Tensor,
+    right_images: torch.Tensor,
+    left_images_disp: np.ndarray,
+    front_images_disp: np.ndarray,
+    right_images_disp: np.ndarray,
+    states: torch.Tensor,
+    commands: torch.Tensor,
+    targets: torch.Tensor,
+  ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    inputs = {
+      "rgb_left": left_images,
+      "rgb_front": front_images,
+      "rgb_right": right_images,
+      "rgb_left_disp": left_images_disp,
+      "rgb_front_disp": front_images_disp,
+      "rgb_right_disp": right_images_disp,
+      "states": states,
+      "commands": commands
+    }
+    return inputs, targets
   
   def _apply_state_noise(self, states: np.ndarray) -> np.ndarray:
     noise = np.random.uniform(0.95, 1.05, size=self._state_shape)
@@ -84,7 +110,11 @@ class CarlaDataset(Dataset):
       transform_list.append(transforms.Lambda(lambda x: x * (255.0 / 128.0) - 1.0)) # custom normalization: (x / 128.0) - 1.0
 
     transform = transforms.Compose(transform_list)
-    return transform(image)
+
+    if self.inference:
+      return transform(image), image
+    else:
+      return transform(image)
 
   def load_dataset(self, townslist: Tuple[str], state_noise: bool):
     if self.sequence_size is None:
@@ -131,17 +161,19 @@ class CarlaDataset(Dataset):
 
         front_images_path = os.path.join(idx_dir, "sensors", "rgb_front")
         for image_path in sorted(os.listdir(front_images_path))[:-1]:
-          self.front_images.append(os.path.join(left_images_path, image_path))
+          self.front_images.append(os.path.join(front_images_path, image_path))
 
         right_images_path = os.path.join(idx_dir, "sensors", "rgb_right")
         for image_path in sorted(os.listdir(right_images_path))[:-1]:
           self.right_images.append(os.path.join(right_images_path, image_path))
 
+    # print(len(self.left_images), len(self.front_images), len(self.right_images), len(self.states), len(self.commands))
     assert len(self.left_images) == len(self.front_images) == len(self.right_images) == len(self.states) == len(self.commands)
 
   def __len__(self):
     return len(self.states) - SEQUENCE_SIZE
 
+  # TODO: inference case could be cleaner (2 functions, one for train/val and one for inference)
   def __getitem__(self, idx):
     left_images = []
     front_images = []
@@ -150,13 +182,29 @@ class CarlaDataset(Dataset):
     commands = []
     targets = []
 
+    # for display during inference
+    if self.inference:
+      left_images_disp = []
+      front_images_disp = []
+      right_images_disp = []
+
     for i in range(SEQUENCE_SIZE):
-      left_image = self.load_image(self.left_images[idx+i])
-      front_image = self.load_image(self.front_images[idx+i])
-      right_image = self.load_image(self.right_images[idx+i])
+      if self.inference:
+        left_image, left_image_disp = self.load_image(self.left_images[idx+i])
+        front_image, front_image_disp = self.load_image(self.front_images[idx+i])
+        right_image, right_image_disp = self.load_image(self.right_images[idx+i])
+      else:
+        left_image = self.load_image(self.left_images[idx+i])
+        front_image = self.load_image(self.front_images[idx+i])
+        right_image = self.load_image(self.right_images[idx+i])
 
       mean = torch.tensor(self._imagenet_mean, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
       std = torch.tensor(self._imagenet_std, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
+
+      if self.inference:
+        left_images_disp.append(left_image_disp)
+        front_images_disp.append(front_image_disp)
+        right_images_disp.append(right_image_disp)
 
       if self.use_imagenet_norm:
         left_image = (left_image - mean) / std
@@ -167,22 +215,40 @@ class CarlaDataset(Dataset):
       front_images.append(front_image)
       right_images.append(right_image)
 
-    left_images = torch.stack(left_images, dim=0)
-    front_images = torch.stack(front_images, dim=0)
-    right_images = torch.stack(right_images, dim=0)
+    left_images = torch.stack(left_images, dim=1)
+    front_images = torch.stack(front_images, dim=1)
+    right_images = torch.stack(right_images, dim=1)
+
+    if self.inference:
+      left_images_disp = np.stack(left_images_disp, axis=0)
+      front_images_disp = np.stack(front_images_disp, axis=0)
+      right_images_disp = np.stack(right_images_disp, axis=0)
 
     states = torch.tensor(self.states[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
     commands = torch.tensor(self.commands[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
     targets = torch.tensor(self.targets[idx+SEQUENCE_SIZE], dtype=torch.float32)
 
-    inputs, targets = CarlaDataset._construct_input_dict(
-      left_images=left_images,
-      front_images=front_images,
-      right_images=right_images,
-      states=states,
-      commands=commands,
-      targets=targets
-    )
+    if self.inference:
+      inputs, targets = CarlaDataset._construct_input_dict_inference(
+        left_images=left_images,
+        front_images=front_images,
+        right_images=right_images,
+        left_images_disp=left_images_disp,
+        front_images_disp=front_images_disp,
+        right_images_disp=right_images_disp,
+        states=states,
+        commands=commands,
+        targets=targets
+      )
+    else:
+      inputs, targets = CarlaDataset._construct_input_dict(
+        left_images=left_images,
+        front_images=front_images,
+        right_images=right_images,
+        states=states,
+        commands=commands,
+        targets=targets
+      )
     return inputs, targets
 
 
@@ -192,7 +258,8 @@ if __name__ == "__main__":
     townslist=TRAIN_TOWN_LIST,
     image_size=IMAGE_SIZE,
     use_imagenet_norm=USE_IMAGENET_NORM,
-    sequence_size=SEQUENCE_SIZE
+    sequence_size=SEQUENCE_SIZE,
+    inference=True
   )
 
   for k, v in dataset[0][0].items():

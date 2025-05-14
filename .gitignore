@@ -2,3 +2,4 @@
 **/__pycache__/
 venv/
 CILv3D/checkpoints/
+data/
