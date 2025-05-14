@@ -47,60 +47,92 @@ class Trainer:
     torch.save(self.model.state_dict(), chpt_path)
     print(f"[+] Checkpoint saved at {chpt_path}. New min eval loss {min_loss}")
 
-  def train_step(self, t, step, sample_batched, loss_func, optim, epoch_losses):
-    LEFT = sample_batched[0]["rgb_left"].permute(0, 2, 1, 3, 4).to(self.device)
-    FRONT = sample_batched[0]["rgb_front"].permute(0, 2, 1, 3, 4).to(self.device)
-    RIGHT = sample_batched[0]["rgb_right"].permute(0, 2, 1, 3, 4).to(self.device)
+  def train_step(self, t, step, sample_batched, loss_func, optim, epoch_losses, epoch_steer_losses, epoch_accel_losses):
+    LEFT = sample_batched[0]["rgb_left"].to(self.device)
+    FRONT = sample_batched[0]["rgb_front"].to(self.device)
+    RIGHT = sample_batched[0]["rgb_right"].to(self.device)
     STATES = sample_batched[0]["states"].to(self.device)
     COMMANDS = sample_batched[0]["commands"].to(self.device)
     Y = sample_batched[1].to(self.device)
     out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
     optim.zero_grad()
+    loss = loss_func(out, Y).mean()
     steer_loss = loss_func(out[:, 0], Y[:, 0]).mean().item()
     accel_loss = loss_func(out[:, 1], Y[:, 1]).mean().item()
-    loss = loss_func(out, Y).mean()
     loss.backward()
     optim.step()
 
-    self.writer.add_scalar("running loss", loss.item(), step)
+    # logging
+    self.writer.add_scalar("running train loss", loss.item(), step)
     epoch_losses.append(loss.item())
-    # TODO: averages per epoch
+
     self.writer.add_scalar("steer loss", steer_loss, step)
+    epoch_steer_losses.append(steer_loss)
+
     self.writer.add_scalar("accel loss", accel_loss, step)
+    epoch_accel_losses.append(accel_loss)
+
     t.set_description(f"[train] Batch loss: {loss.item():.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
 
   def train(self):
     loss_func = nn.L1Loss()
     self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=0.1, patience=5, verbose=True)
+
     losses, vlosses = [], []
+    steer_losses, steer_vlosses = [], []
+    accel_losses, accel_vlosses = [], []
 
     try:
       min_epoch_vloss = float("inf")
       step = 0
+      vstep = 0
       print("[*] Training...")
       for epoch in range(EPOCHS):
         self.model.train()
         print(f"\n[=>] Epoch {epoch+1}/{EPOCHS}")
         epoch_losses, epoch_vlosses = [], []
+        epoch_steer_losses, epoch_steer_vlosses = [], []
+        epoch_accel_losses, epoch_accel_vlosses = [], []
 
         for i_batch, sample_batched in enumerate((t := tqdm(self.train_loader))):
-          self.train_step(t, step, sample_batched, loss_func, self.optim, epoch_losses)
+          self.train_step(t, step, sample_batched, loss_func, self.optim, epoch_losses, epoch_steer_losses, epoch_accel_losses)
           step += 1
 
+        # logging
         avg_epoch_loss = np.array(epoch_losses).mean()
         losses.append(avg_epoch_loss)
         self.writer.add_scalar("epoch training loss", avg_epoch_loss, epoch)
-        print("[->] Epoch average training loss: %.4f"%(avg_epoch_loss))
+
+        avg_epoch_steer_loss = np.array(epoch_steer_losses).mean()
+        steer_losses.append(avg_epoch_steer_loss)
+        self.writer.add_scalar("epoch steer loss", avg_epoch_steer_loss, epoch)
+
+        avg_epoch_accel_loss = np.array(epoch_accel_losses).mean()
+        accel_losses.append(avg_epoch_accel_loss)
+        self.writer.add_scalar("epoch accel loss", avg_epoch_accel_loss, epoch)
+
+        print("[->] Epoch average training loss: %.4f - steer loss: %.4f - acceleration loss: %.4f"%(avg_epoch_loss, avg_epoch_steer_loss, avg_epoch_accel_loss))
 
         avg_epoch_vloss = None
         if self.eval_epoch:
-          self.eval(loss_func, epoch_vlosses)
+          self.eval(loss_func, vstep, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses)
+
+          # logging
           avg_epoch_vloss = np.array(epoch_vlosses).mean()
           vlosses.append(avg_epoch_vloss)
           self.writer.add_scalar("epoch validation loss", avg_epoch_vloss, epoch)
-          print("[->] Epoch average validation loss: %.4f"%(avg_epoch_vloss))
+
+          avg_epoch_steer_vloss = np.array(epoch_steer_vlosses).mean()
+          steer_vlosses.append(avg_epoch_steer_vloss)
+          self.writer.add_scalar("epoch steer validation loss", avg_epoch_steer_vloss, epoch)
+
+          avg_epoch_accel_vloss = np.array(epoch_accel_vlosses).mean()
+          accel_vlosses.append(avg_epoch_accel_vloss)
+          self.writer.add_scalar("epoch accel validation loss", avg_epoch_accel_vloss, epoch)
+
+          print("[->] Epoch average validation loss: %.4f - steer loss: %.4f - acceleration loss: %.4f"%(avg_epoch_vloss, avg_epoch_steer_vloss, avg_epoch_accel_vloss))
 
         if self.save_checkpoints and avg_epoch_vloss is not None and avg_epoch_vloss < min_epoch_vloss:
           min_epoch_vloss = avg_epoch_vloss
@@ -112,33 +144,41 @@ class Trainer:
     torch.save(self.model.state_dict(), self.model_path)
     print(f"[+] Model saved at {self.model_path}")
 
-  def eval_step(self, t, i_batch, sample_batched, loss_func, epoch_vlosses):
-    LEFT = sample_batched[0]["rgb_left"].permute(0, 2, 1, 3, 4).to(self.device)
-    FRONT = sample_batched[0]["rgb_front"].permute(0, 2, 1, 3, 4).to(self.device)
-    RIGHT = sample_batched[0]["rgb_right"].permute(0, 2, 1, 3, 4).to(self.device)
+  def eval_step(self, t, vstep, sample_batched, loss_func, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses):
+    LEFT = sample_batched[0]["rgb_left"].to(self.device)
+    FRONT = sample_batched[0]["rgb_front"].to(self.device)
+    RIGHT = sample_batched[0]["rgb_right"].to(self.device)
     STATES = sample_batched[0]["states"].to(self.device)
     COMMANDS = sample_batched[0]["commands"].to(self.device)
     Y = sample_batched[1].to(self.device)
     out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
-    # TODO: averages per epoch
+    loss = loss_func(out, Y).mean()
     steer_loss = loss_func(out[:, 0], Y[:, 0]).mean().item()
     accel_loss = loss_func(out[:, 1], Y[:, 1]).mean().item()
-    loss = loss_func(out, Y).mean()
 
     if self.scheduler:
       self.scheduler.step(loss)
       # print(f"LR: {self.optim.param_groups[0]['lr']}")
 
-    self.writer.add_scalar("running loss", loss.item(), i_batch)
+    # logging
+    self.writer.add_scalar("running val loss", loss.item(), vstep)
     epoch_vlosses.append(loss.item())
+
+    self.writer.add_scalar("steer val loss", steer_loss, vstep)
+    epoch_steer_vlosses.append(steer_loss)
+
+    self.writer.add_scalar("accel val loss", accel_loss, vstep)
+    epoch_accel_vlosses.append(accel_loss)
+
     t.set_description(f"[val] Batch loss: {loss.item():.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
 
-  def eval(self, loss_func, epoch_vlosses):
+  def eval(self, loss_func, vstep, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses):
     with torch.no_grad():
       self.model.eval()
       try:
         for i_batch, sample_batched in enumerate((t := tqdm(self.val_loader))):
-          self.eval_step(t, i_batch, sample_batched, loss_func, epoch_vlosses)
+          self.eval_step(t, vstep, sample_batched, loss_func, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses)
+          vstep += 1
       except KeyboardInterrupt:
         print("[*] Evaluation interrupted.")
