@@ -13,20 +13,20 @@ EMA = bool(os.getenv("EMA", False))
 
 @dataclass
 class CILv3DConfig:
-  sequence_size: int = SEQUENCE_SIZE
-  state_size: int = 7
-  command_size: int = 6
-  transformer_heads: int = 8
-  transformer_layers: int = 6
-  filters_1d: int = 32
-  embedding_size: int = 512
-  freeze_backbone: bool = True
-  transformer_dropout: float = 0.4
-  use_revin: bool = True
+  sequence_size = SEQUENCE_SIZE
+  state_size = 7
+  command_size = 6
+  transformer_heads = 8
+  transformer_layers = 6
+  filters_1d = 32
+  embedding_size = 512
+  freeze_backbone = True
+  transformer_dropout = 0.4
+  use_revin = True
 
 
 class CILv3D(nn.Module):
-  def __init__(self, device, cfg: CILv3DConfig = CILv3DConfig()):
+  def __init__(self, device, cfg = CILv3DConfig()):
     super(CILv3D, self).__init__()
 
     self.device = device

@@ -19,7 +19,7 @@ class CarlaDataset(Dataset):
     image_size: Tuple[int, int],
     use_imagenet_norm: bool,
     sequence_size: Optional[int] = None,
-    inference: bool = False
+    inference = False
   ):
     super(CarlaDataset, self).__init__()
 

@@ -20,10 +20,10 @@ class Trainer:
       train_loader: DataLoader,
       val_loader: Optional[DataLoader] = None,
       writer_path: Optional[str] = None,
-      eval_epoch: bool = False,
-      skip_training: bool = False,
-      save_checkpoints: bool = False,
-      ema: bool = False,
+      eval_epoch = False,
+      skip_training = False,
+      save_checkpoints = False,
+      ema = False,
       early_stopping = True
   ):
     self.device = device
