@@ -23,6 +23,8 @@ class Trainer:
       eval_epoch: bool = False,
       skip_training: bool = False,
       save_checkpoints: bool = False,
+      ema: bool = False,
+      early_stopping = True
   ):
     self.device = device
     self.model = model
@@ -33,18 +35,24 @@ class Trainer:
     self.eval_epoch = eval_epoch
     self.skip_training = skip_training
     self.save_checkpoints = save_checkpoints
+    self.ema = ema
     self.scheduler = None
+    self.ema_model = None
+    self.early_stopping = early_stopping
 
     if not writer_path:
       today = str(datetime.now()).replace(" ", "_")
       auto_name = "-".join([model_path.split('/')[-1].split('.')[0], today, f"lr_{LR}", f"bs_{BATCH_SIZE}"])
-      writer_path = str("runs/" + auto_name).replace(":", "_")
+      writer_path = str("runs/" + auto_name).replace(":", "_").replace(".", "_")
     print("[*] Tensorboard output path:", writer_path)
     self.writer = SummaryWriter(writer_path)
 
   def save_checkpoint(self, min_loss):
     chpt_path = self.model_path.split(".")[0] + f"_best.pt"
-    torch.save(self.model.state_dict(), chpt_path)
+    if self.ema:
+      torch.save(self.ema_model.module.state_dict(), chpt_path)
+    else:
+      torch.save(self.model.state_dict(), chpt_path)
     print(f"[+] Checkpoint saved at {chpt_path}. New min eval loss {min_loss}")
 
   def train_step(self, t, step, sample_batched, loss_func, optim, epoch_losses, epoch_steer_losses, epoch_accel_losses):
@@ -63,6 +71,9 @@ class Trainer:
     loss.backward()
     optim.step()
 
+    if self.ema:
+      self.ema_model.update_parameters(self.model)
+
     # logging
     self.writer.add_scalar("running train loss", loss.item(), step)
     epoch_losses.append(loss.item())
@@ -75,10 +86,17 @@ class Trainer:
 
     t.set_description(f"[train] Batch loss: {loss.item():.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
 
+  # TODO: early stopping
   def train(self):
     loss_func = nn.L1Loss()
     self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-    self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=0.1, patience=5, verbose=True)
+    self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=LR_FACTOR, patience=LR_PATIENCE, verbose=True)
+
+    if self.ema:
+      self.ema_model = torch.optim.swa_utils.AveragedModel(
+        self.model,
+        multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.999)
+      )
 
     losses, vlosses = [], []
     steer_losses, steer_vlosses = [], []
@@ -88,6 +106,7 @@ class Trainer:
       min_epoch_vloss = float("inf")
       step = 0
       vstep = 0
+      stop_cnt = 0
       print("[*] Training...")
       for epoch in range(EPOCHS):
         self.model.train()
@@ -117,7 +136,7 @@ class Trainer:
 
         avg_epoch_vloss = None
         if self.eval_epoch:
-          self.eval(loss_func, vstep, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses)
+          vstep = self.eval(loss_func, vstep, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses)
 
           # logging
           avg_epoch_vloss = np.array(epoch_vlosses).mean()
@@ -134,14 +153,23 @@ class Trainer:
 
           print("[->] Epoch average validation loss: %.4f - steer loss: %.4f - acceleration loss: %.4f"%(avg_epoch_vloss, avg_epoch_steer_vloss, avg_epoch_accel_vloss))
 
+        # save checkpoints or early stop
         if self.save_checkpoints and avg_epoch_vloss is not None and avg_epoch_vloss < min_epoch_vloss:
           min_epoch_vloss = avg_epoch_vloss
           self.save_checkpoint(min_epoch_vloss)
+        else:
+          stop_cnt += 1
+          if self.early_stopping and stop_cnt >= EARLY_STOP_EPOCHS:
+            print(f"[!] Early stopping at epoch {epoch+1}/{EPOCHS}.")
+            break
     except KeyboardInterrupt:
       print("[*] Training interrupted. Saving model...")
 
     print("[+] Training done")
-    torch.save(self.model.state_dict(), self.model_path)
+    if self.ema:
+      torch.save(self.ema_model.module.state_dict(), self.model_path)
+    else:
+      torch.save(self.model.state_dict(), self.model_path)
     print(f"[+] Model saved at {self.model_path}")
 
   def eval_step(self, t, vstep, sample_batched, loss_func, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses):
@@ -151,7 +179,11 @@ class Trainer:
     STATES = sample_batched[0]["states"].to(self.device)
     COMMANDS = sample_batched[0]["commands"].to(self.device)
     Y = sample_batched[1].to(self.device)
-    out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
+
+    if self.ema:
+      out = self.ema_model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
+    else:
+      out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
     loss = loss_func(out, Y).mean()
     steer_loss = loss_func(out[:, 0], Y[:, 0]).mean().item()
@@ -182,3 +214,4 @@ class Trainer:
           vstep += 1
       except KeyboardInterrupt:
         print("[*] Evaluation interrupted.")
+    return vstep

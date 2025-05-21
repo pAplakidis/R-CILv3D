@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
+import os
 import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
 from config import *
+from models.RevIN import RevIN
 from models.uniformer_video.uniformer import uniformer_small
+
+EMA = bool(os.getenv("EMA", False))
 
 
 @dataclass
@@ -15,9 +19,10 @@ class CILv3DConfig:
   transformer_heads: int = 8
   transformer_layers: int = 6
   filters_1d: int = 32
-  embedding_size: int = 512 #* 3
+  embedding_size: int = 512
   freeze_backbone: bool = True
   transformer_dropout: float = 0.4
+  use_revin: bool = True
 
 
 class CILv3D(nn.Module):
@@ -34,6 +39,7 @@ class CILv3D(nn.Module):
     self.transformer_layers = cfg.transformer_layers
     self.freeze_backbone = cfg.freeze_backbone
     self.transformer_dropout = cfg.transformer_dropout
+    self.use_revin = cfg.use_revin
 
     uniformer_state_dict = torch.load('models/state_dicts/uniformer_small_k400_16x8.pth', map_location='cpu')
     self.uniformer = uniformer_small()
@@ -44,21 +50,49 @@ class CILv3D(nn.Module):
       for param in self.uniformer.parameters():
         param.requires_grad = False
 
-    self.state_embedding = nn.Sequential(
-      nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=1),
-      nn.BatchNorm1d(self.filters_1d),
-      # nn.LayerNorm(self.filters_1d),
-      nn.Flatten(),
-      nn.Linear(self.filters_1d * self.state_size, self.embedding_size),
-    )
-    self.command_embedding = nn.Sequential(
-      nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=1),
-      nn.BatchNorm1d(self.filters_1d),
-      # nn.LayerNorm(self.filters_1d),
-      nn.Flatten(),
-      nn.Linear(self.filters_1d * self.command_size, self.embedding_size),
-    )
+    # state embeddings
+    if self.use_revin:
+      self.revin_state = RevIN(self.state_size)
+      self.state_embedding = nn.Sequential(
+        nn.Flatten(),
+        nn.Linear(self.sequence_size * self.state_size, self.embedding_size),
+        nn.Dropout(self.transformer_dropout)
+      )
+    else:
+      if EMA:
+        self.state_embedding = nn.Sequential(
+          nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+          nn.BatchNorm1d(self.filters_1d),
+          nn.Flatten(),
+          nn.Linear(self.filters_1d * (self.state_size - self.sequence_size + 1), self.embedding_size),
+          nn.Dropout(self.transformer_dropout)
+        )
+      else:
+        self.state_embedding = nn.Sequential(
+          nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+          nn.Flatten(),
+          nn.Linear(self.filters_1d * (self.state_size - self.sequence_size + 1), self.embedding_size),
+          nn.Dropout(self.transformer_dropout)
+        )
 
+    # command embeddings
+    if EMA:
+      self.command_embedding = nn.Sequential(
+        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+        nn.Flatten(),
+        nn.Linear(self.filters_1d * (self.command_size - self.sequence_size + 1), self.embedding_size), # For Conv1d
+        nn.Dropout(self.transformer_dropout)
+      )
+    else:
+      self.command_embedding = nn.Sequential(
+        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+        nn.BatchNorm1d(self.filters_1d),
+        nn.Flatten(),
+        nn.Linear(self.filters_1d * (self.command_size - self.sequence_size + 1), self.embedding_size), # For Conv1d
+        nn.Dropout(self.transformer_dropout)
+      )
+
+    # transformer
     self.layernorm = nn.LayerNorm(self.embedding_size)
     encoder_layer = nn.TransformerEncoderLayer(
       d_model=self.embedding_size,
@@ -67,7 +101,8 @@ class CILv3D(nn.Module):
       activation="gelu"
     )
     self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=self.transformer_layers)
-    self.linear = nn.Linear(3 * self.embedding_size, 2)
+    # self.linear = nn.Linear(3 * self.embedding_size, 2)
+    self.linear = nn.Linear(3 * self.embedding_size, self.state_size)
 
   def positional_encoding(self, batch_size: int, length: int, depth: int) -> torch.Tensor:
     assert depth % 2 == 0, "Depth must be even."
@@ -96,7 +131,7 @@ class CILv3D(nn.Module):
     commands: (B, sequence_size, command_size)
     """
 
-    state_emb = self.state_embedding(states)
+    state_emb = self.state_embedding(self.revin_state(states, "norm"))
     command_emb = self.command_embedding(commands)
     control_embedding = state_emb + command_emb
     control_embedding = control_embedding.unsqueeze(1).repeat(1, 3, 1)  # (B, 3, embedding_size)
@@ -114,8 +149,10 @@ class CILv3D(nn.Module):
     z = vision_embeddings + positional_embeddings + control_embedding
 
     transformer_out = self.transformer_encoder(self.layernorm(z)).flatten(1, 2)
-    out = self.linear(transformer_out)
-    return out
+    linear_in = transformer_out + command_emb.repeat(1, 3)
+    out = self.linear(linear_in)
+    out = self.revin_state(out, "denorm")
+    return out[:, -2:]
 
 
 if __name__ == "__main__":

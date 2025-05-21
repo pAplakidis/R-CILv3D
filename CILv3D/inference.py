@@ -20,6 +20,7 @@ EPISODE_LEN = 1000
 
 
 # TODO: cleanup into functions
+# TODO: show command and state values
 if __name__ == "__main__":
   if not MODEL_PATH:
     print("Usage: MODEL_PATH=<path_to_model> TOWN=<town_idx> EPISODE=<episode_idx> ./inference.py")
@@ -70,7 +71,7 @@ if __name__ == "__main__":
     line_pred_accel, = ax_accel.plot([], [], 'r-', label='Predicted Accel')
     line_gt_accel,   = ax_accel.plot([], [], 'g-', label='GT Accel')
     ax_accel.set_xlim(0, 100)
-    ax_accel.set_ylim(-0.1, 1.1)
+    ax_accel.set_ylim(-1.1, 1.1)
     ax_accel.set_title("Acceleration")
     ax_accel.set_xlabel("Frame")
     ax_accel.set_ylabel("Accel")
@@ -101,6 +102,7 @@ if __name__ == "__main__":
       gt = Y.cpu().numpy()
       gt_steer = gt[0]
       gt_accel = gt[1]
+      # TODO: add to plot
       print(f"MODEL - Steer: {pred_steer}, Accel: {pred_accel}")
       print(f"GT - Steer: {gt_steer}, Accel: {gt_accel}")
       print()

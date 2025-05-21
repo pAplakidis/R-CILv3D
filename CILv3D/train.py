@@ -9,11 +9,13 @@ from dataset import *
 from cilv3d import CILv3D
 from trainer import Trainer
 
-N_WORKERS = psutil.cpu_count(logical=False)
-PREFETCH_FACTOR = psutil.cpu_count(logical=False) // 2
-
 MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/CILv3D/CILv3D.pt")
 CHECKPOINT = os.getenv("CHECKPOINT", None)
+EMA = bool(os.getenv("EMA", False))
+
+N_WORKERS = psutil.cpu_count(logical=False)
+PREFETCH_FACTOR = psutil.cpu_count(logical=False) // 2
+PIN_MEMORY = not EMA
 
 
 if __name__ == "__main__":
@@ -26,6 +28,8 @@ if __name__ == "__main__":
   print(f"Checkpoint path: {CHECKPOINT}")
   print(f"Epochs: {EPOCHS} - Batch size: {BATCH_SIZE} - Learning rate: {LR} - Weight decay: {WEIGHT_DECAY}")
   print(f"Number of workers: {N_WORKERS} - Prefetch factor: {PREFETCH_FACTOR}")
+  print(f"EMA: {EMA} - Pin memory: {PIN_MEMORY}")
+  print(f"NORMALIZE_STATES {NORMALIZE_STATES}")
   print()
 
   train_set = CarlaDataset(
@@ -44,9 +48,9 @@ if __name__ == "__main__":
   )
 
   train_loader =  DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True,
-                             prefetch_factor=PREFETCH_FACTOR, num_workers=N_WORKERS, pin_memory=True)
+                             prefetch_factor=PREFETCH_FACTOR, num_workers=N_WORKERS, pin_memory=PIN_MEMORY)
   val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False,
-                          prefetch_factor=PREFETCH_FACTOR, num_workers=N_WORKERS, pin_memory=True)
+                          prefetch_factor=PREFETCH_FACTOR, num_workers=N_WORKERS, pin_memory=PIN_MEMORY)
 
   # torch.set_float32_matmul_precision('high')
   model = CILv3D(device=device)
@@ -57,5 +61,5 @@ if __name__ == "__main__":
   # model = torch.compile(model)
 
   trainer = Trainer(device, model, MODEL_PATH, train_loader, val_loader,
-                    eval_epoch=True, save_checkpoints=True)
+                    eval_epoch=True, save_checkpoints=True, ema=EMA)
   trainer.train()
