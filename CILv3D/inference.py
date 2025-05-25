@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 import os
 import torch
+import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
+from utils import *
 from config import *
 from dataset import CarlaDataset  
 from cilv3d import CILv3D
 
 # EXAMPLE USAGE: MODEL_PATH=checkpoints/CILv3D_new/CILv3D_e48_best.pt TOWN=1 EPISODE=8 ./inference.py
+
 MODEL_PATH = os.getenv("MODEL_PATH")
 TOWN = int(os.getenv("TOWN", 0))
 EPISODE = int(os.getenv("EPISODE", 0))
@@ -17,6 +21,32 @@ EPISODE = int(os.getenv("EPISODE", 0))
 TOWNS = ["Town01", "Town02", "Town03", "Town04", "Town05", "Town06", "Town07", "Town10HD"]
 TOWN_LEN = 10
 EPISODE_LEN = 1000
+
+# Steering wheel setup
+def draw_steering(ax, steer_val):
+  ax.clear()
+  ax.set_title("Steering Wheel")
+  ax.axis("off")
+  wheel = patches.Circle((0, 0), radius=1.0, fill=False, linewidth=3)
+  ax.add_patch(wheel)
+  angle = steer_val * 90  # Convert to degrees
+  x = np.sin(np.radians(angle))
+  y = np.cos(np.radians(angle))
+  ax.plot([0, x], [0, y], color="red", linewidth=3)
+  ax.set_xlim(-1.2, 1.2)
+  ax.set_ylim(-1.2, 1.2)
+  ax.set_aspect('equal')
+
+# Pedal bar setup
+def draw_pedal(ax, accel_val):
+  ax.clear()
+  ax.set_title("Gas / Brake Pedal")
+  ax.axvline(x=0, color='black')
+  color = 'green' if accel_val >= 0 else 'red'
+  ax.barh(y=[0], width=[accel_val], color=color, height=0.3)
+  ax.set_xlim(-1.1, 1.1)
+  ax.set_yticks([])
+  ax.set_xlabel("← Brake       Gas →")
 
 
 # TODO: cleanup into functions
@@ -51,13 +81,16 @@ if __name__ == "__main__":
 
   with torch.no_grad():
    # initialize figure and layout (2 rows x 3 columns)
-    fig = plt.figure(figsize=(15, 8))
+    fig = plt.figure(figsize=(16, 10))
     
-    ax_left_img   = plt.subplot2grid((2, 3), (0, 0))
-    ax_front_img  = plt.subplot2grid((2, 3), (0, 1))
-    ax_right_img  = plt.subplot2grid((2, 3), (0, 2))
-    ax_steer      = plt.subplot2grid((2, 3), (1, 0), colspan=2)
-    ax_accel      = plt.subplot2grid((2, 3), (1, 2))
+    ax_left_img   = plt.subplot2grid((3, 4), (0, 0))
+    ax_front_img  = plt.subplot2grid((3, 4), (0, 1))
+    ax_right_img  = plt.subplot2grid((3, 4), (0, 2))
+    ax_steer      = plt.subplot2grid((3, 4), (1, 0), colspan=2)
+    ax_accel      = plt.subplot2grid((3, 4), (1, 2))
+    ax_steer_vis  = plt.subplot2grid((3, 4), (2, 0))
+    ax_accel_vis  = plt.subplot2grid((3, 4), (2, 1))
+    ax_command    = plt.subplot2grid((3, 4), (2, 2))
 
     # setup plots
     line_pred_steer, = ax_steer.plot([], [], 'r-', label='Predicted Steer')
@@ -90,11 +123,13 @@ if __name__ == "__main__":
       FRONT = data[0]["rgb_front"].unsqueeze(0).to(device)
       RIGHT = data[0]["rgb_right"].unsqueeze(0).to(device)
       STATES = data[0]["states"].unsqueeze(0).to(device)
-      COMMANDS = data[0]["commands"].unsqueeze(0).to(device)
+      CMD = data[0]["commands"].unsqueeze(0).to(device)
       Y = data[1].to(device)
-      out = model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
+      out = model(LEFT, FRONT, RIGHT, STATES, CMD)
 
-      # post processing
+      command = COMMANDS[torch.argmax(data[0]["commands"][-1]).item()]
+
+      # predictions post processing
       pred = out[0].cpu().numpy()
       pred_steer = pred[0]
       pred_accel = pred[1]
@@ -102,9 +137,10 @@ if __name__ == "__main__":
       gt = Y.cpu().numpy()
       gt_steer = gt[0]
       gt_accel = gt[1]
-      # TODO: add to plot
+
       print(f"MODEL - Steer: {pred_steer}, Accel: {pred_accel}")
       print(f"GT - Steer: {gt_steer}, Accel: {gt_accel}")
+      print(f"COMMAND: {command}")
       print()
 
       pred_steers.append(pred_steer)
@@ -137,6 +173,16 @@ if __name__ == "__main__":
       line_gt_steer.set_data(x_vals, gt_steers)
       line_pred_accel.set_data(x_vals, pred_accels)
       line_gt_accel.set_data(x_vals, gt_accels)
+
+      # draw controls
+      draw_steering(ax_steer_vis, pred_steer)
+      draw_pedal(ax_accel_vis, pred_accel)
+
+      # draw command and state data
+      ax_command.clear()
+      ax_command.axis("off")
+      ax_command.set_title("Command")
+      ax_command.text(0.5, 0.5, command, fontsize=14, ha='center', va='center', wrap=True)
 
       # dynamic x-axis update
       if step > 95:
