@@ -37,15 +37,16 @@ def preprocess_states(states_df: pd.DataFrame) -> pd.DataFrame:
     'steer',
     'pedal_acceleration',
   ]].copy()
-  if NORMALIZE_STATES:
-    states_df = normalize_states(states_df)
   states_df = one_hot_commands(df=states_df)
+  if NORMALIZE_STATES: states_df = normalize_states(states_df)
   return states_df
 
 def load_states(filepath: str) -> Tuple[pd.DataFrame, List[int]]:
   states_df = pd.read_csv(filepath)
   states_df = preprocess_states(states_df=states_df)
 
+  if not states_df['frame'].is_monotonic_increasing:
+      states_df.sort_values(by='frame', inplace=True, ignore_index=True)
   if not states_df['frame'].is_monotonic_increasing:
       states_df.sort_values(by='frame', inplace=True, ignore_index=True)
 
@@ -60,9 +61,9 @@ def normalize_states(states_df: pd.DataFrame) -> pd.DataFrame:
   states_df['compass_rads'] /= 6.283
   states_df['gps_compass_bearing'] /= np.pi
 
-  steer = states_df["steer"].values
-  states_df['steer'] = (steer - steer.min()) / (steer.max() - steer.min())
-  pedal_acceleration = states_df["pedal_acceleration"].values
-  states_df['pedal_acceleration'] = (pedal_acceleration - pedal_acceleration.min()) / (pedal_acceleration.max() - pedal_acceleration.min())
+  # steer = states_df["steer"].values
+  # states_df['steer'] = (steer - steer.min()) / (steer.max() - steer.min())
+  # pedal_acceleration = states_df["pedal_acceleration"].values
+  # states_df['pedal_acceleration'] = (pedal_acceleration - pedal_acceleration.min()) / (pedal_acceleration.max() - pedal_acceleration.min())
 
   return states_df

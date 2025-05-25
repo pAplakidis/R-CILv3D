@@ -132,10 +132,13 @@ class CarlaDataset(Dataset):
       t.set_description(f"[CarlaDataset] Loading {town}")
       for idx in os.listdir(town_dir):
         idx_dir = os.path.join(town_dir, idx)
-
         states_data, frame_ids = load_states(os.path.join(idx_dir, "states.csv"))
+
+        target_columns = ["steer", "pedal_acceleration"]
+        targets_data = states_data[target_columns].copy()
+
         if state_noise:
-          states_data = states_data.apply(lambda row: self._apply_state_noise(row.values), axis=1, result_type='broadcast')
+          states_data[["steer", "pedal_acceleration"]] = states_data[["steer", "pedal_acceleration"]].apply(lambda row: self._apply_state_noise(row.values), axis=1, result_type='broadcast')
 
         # states
         columns = ["speed", "acceleration", "rotation_rads", "compass_rads", "gps_compass_bearing", "pedal_acceleration", "steer"]
@@ -149,9 +152,7 @@ class CarlaDataset(Dataset):
           self.commands.append(tuple(row))
 
         # targets
-        columns = ["steer", "pedal_acceleration"]
-        targets_data = states_data[columns]
-        for _, row in list(targets_data[columns].iterrows())[1:]:
+        for _, row in list(targets_data[target_columns].iterrows())[1:]:
           self.targets.append(tuple(row))
 
         # images
