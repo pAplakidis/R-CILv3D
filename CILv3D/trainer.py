@@ -23,7 +23,6 @@ class Trainer:
       eval_epoch = False,
       skip_training = False,
       save_checkpoints = False,
-      ema = False,
       early_stopping = True
   ):
     self.device = device
@@ -35,7 +34,6 @@ class Trainer:
     self.eval_epoch = eval_epoch
     self.skip_training = skip_training
     self.save_checkpoints = save_checkpoints
-    self.ema = ema
     self.scheduler = None
     self.ema_model = None
     self.early_stopping = early_stopping
@@ -49,7 +47,7 @@ class Trainer:
 
   def save_checkpoint(self, min_loss):
     chpt_path = self.model_path.split(".")[0] + f"_best.pt"
-    if self.ema:
+    if EMA:
       torch.save(self.ema_model.module.state_dict(), chpt_path)
     else:
       torch.save(self.model.state_dict(), chpt_path)
@@ -71,7 +69,7 @@ class Trainer:
     loss.backward()
     optim.step()
 
-    if self.ema:
+    if EMA:
       self.ema_model.update_parameters(self.model)
 
     # logging
@@ -92,7 +90,7 @@ class Trainer:
     self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=LR_FACTOR, patience=LR_PATIENCE, verbose=True)
 
-    if self.ema:
+    if EMA:
       self.ema_model = torch.optim.swa_utils.AveragedModel(
         self.model,
         multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.999)
@@ -153,6 +151,11 @@ class Trainer:
 
           print("[->] Epoch average validation loss: %.4f - steer loss: %.4f - acceleration loss: %.4f"%(avg_epoch_vloss, avg_epoch_steer_vloss, avg_epoch_accel_vloss))
 
+        if self.scheduler:
+          self.scheduler.step(avg_epoch_vloss)
+          # print(f"LR: {self.optim.param_groups[0]['lr']}")
+
+        # TODO: self.scheduler.load_state_dict for resume training
         # save checkpoints or early stop
         if self.save_checkpoints and avg_epoch_vloss is not None and avg_epoch_vloss < min_epoch_vloss:
           min_epoch_vloss = avg_epoch_vloss
@@ -166,7 +169,7 @@ class Trainer:
       print("[*] Training interrupted. Saving model...")
 
     print("[+] Training done")
-    if self.ema:
+    if EMA:
       torch.save(self.ema_model.module.state_dict(), self.model_path)
     else:
       torch.save(self.model.state_dict(), self.model_path)
@@ -180,7 +183,7 @@ class Trainer:
     COMMANDS = sample_batched[0]["commands"].to(self.device)
     Y = sample_batched[1].to(self.device)
 
-    if self.ema:
+    if EMA:
       out = self.ema_model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
     else:
       out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
@@ -188,10 +191,6 @@ class Trainer:
     loss = loss_func(out, Y).mean()
     steer_loss = loss_func(out[:, 0], Y[:, 0]).mean().item()
     accel_loss = loss_func(out[:, 1], Y[:, 1]).mean().item()
-
-    if self.scheduler:
-      self.scheduler.step(loss)
-      # print(f"LR: {self.optim.param_groups[0]['lr']}")
 
     # logging
     self.writer.add_scalar("running val loss", loss.item(), vstep)
