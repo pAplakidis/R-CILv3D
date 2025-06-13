@@ -54,6 +54,7 @@ def load_states(filepath: str) -> Tuple[pd.DataFrame, List[int]]:
   frame_ids = states_df['frame'].to_list()
   return states, frame_ids
 
+# TODO: MaxAbsScaler on steer and pedal_acceleration (inputs and targets) + plot
 def normalize_states(states_df: pd.DataFrame) -> pd.DataFrame:
   states_df['speed'] /= 30.0
   states_df['acceleration'] /= 10.0

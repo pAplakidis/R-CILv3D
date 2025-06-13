@@ -59,6 +59,8 @@ class CarlaDataset(Dataset):
     left_images: torch.Tensor,
     front_images: torch.Tensor,
     right_images: torch.Tensor,
+    steer_weight: torch.Tensor,
+    accel_weight: torch.Tensor,
     states: torch.Tensor,
     commands: torch.Tensor,
     targets: torch.Tensor,
@@ -67,6 +69,8 @@ class CarlaDataset(Dataset):
       "rgb_left": left_images,
       "rgb_front": front_images,
       "rgb_right": right_images,
+      "steer_weight": steer_weight,
+      "accel_weight": accel_weight,
       "states": states,
       "commands": commands
     }
@@ -96,6 +100,7 @@ class CarlaDataset(Dataset):
     }
     return inputs, targets
   
+  # TODO: apply during training, only for the inputs
   def _apply_state_noise(self, states: np.ndarray) -> np.ndarray:
     noise = np.random.uniform(0.95, 1.05, size=self._state_shape)
     return states * noise
@@ -242,10 +247,15 @@ class CarlaDataset(Dataset):
         targets=targets
       )
     else:
+      ws = torch.where(torch.abs(targets[0]) > 0.5, torch.tensor(2.0), torch.tensor(1.0))
+      wa = torch.where(targets[1] == -1.0, torch.tensor(2.0), torch.tensor(1.0))
+
       inputs, targets = CarlaDataset._construct_input_dict(
         left_images=left_images,
         front_images=front_images,
         right_images=right_images,
+        steer_weight=ws,
+        accel_weight=wa,
         states=states,
         commands=commands,
         targets=targets
@@ -256,7 +266,7 @@ class CarlaDataset(Dataset):
 if __name__ == "__main__":
   dataset = CarlaDataset(
     base_dir=DATA_DIR,
-    townslist=TRAIN_TOWN_LIST,
+    townslist=TRAIN_TOWN_LIST + EVAL_TOWN_LIST,
     image_size=IMAGE_SIZE,
     use_imagenet_norm=USE_IMAGENET_NORM,
     sequence_size=SEQUENCE_SIZE,

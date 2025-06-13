@@ -18,7 +18,8 @@ MODEL_PATH = os.getenv("MODEL_PATH")
 TOWN = int(os.getenv("TOWN", 0))
 EPISODE = int(os.getenv("EPISODE", 0))
 
-TOWNS = ["Town01", "Town02", "Town03", "Town04", "Town05", "Town06", "Town07", "Town10HD"]
+# TOWNS = TRAIN_TOWN_LIST + EVAL_TOWN_LIST
+TOWNS = EVAL_TOWN_LIST
 TOWN_LEN = 10
 EPISODE_LEN = 1000
 

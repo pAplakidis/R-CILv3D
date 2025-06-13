@@ -61,6 +61,8 @@ if __name__ == "__main__":
   model.to(device)
   # model = torch.compile(model)
 
-  trainer = Trainer(device, model, MODEL_PATH, train_loader, val_loader,
-                    eval_epoch=True, save_checkpoints=True)
+  trainer = Trainer(
+    device, model, MODEL_PATH, train_loader, val_loader,
+    eval_epoch=True, save_checkpoints=True, early_stopping=False
+  )
   trainer.train()

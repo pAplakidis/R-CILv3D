@@ -10,20 +10,21 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from config import *
+from lib.knee_lr_schedule import KneeLRScheduler
 
 class Trainer:
   def __init__(
-      self,
-      device: torch.device,
-      model,
-      model_path: str,
-      train_loader: DataLoader,
-      val_loader: Optional[DataLoader] = None,
-      writer_path: Optional[str] = None,
-      eval_epoch = False,
-      skip_training = False,
-      save_checkpoints = False,
-      early_stopping = True
+    self,
+    device: torch.device,
+    model,
+    model_path: str,
+    train_loader: DataLoader,
+    val_loader: Optional[DataLoader] = None,
+    writer_path: Optional[str] = None,
+    eval_epoch = False,
+    skip_training = False,
+    save_checkpoints = False,
+    early_stopping = True
   ):
     self.device = device
     self.model = model
@@ -53,19 +54,27 @@ class Trainer:
       torch.save(self.model.state_dict(), chpt_path)
     print(f"[+] Checkpoint saved at {chpt_path}. New min eval loss {min_loss}")
 
-  def train_step(self, t, step, sample_batched, loss_func, optim, epoch_losses, epoch_steer_losses, epoch_accel_losses):
+  def train_step(self, t, step, sample_batched, loss_func, optim, epoch_losses, epoch_mae, epoch_steer_losses, epoch_accel_losses):
     LEFT = sample_batched[0]["rgb_left"].to(self.device)
     FRONT = sample_batched[0]["rgb_front"].to(self.device)
     RIGHT = sample_batched[0]["rgb_right"].to(self.device)
     STATES = sample_batched[0]["states"].to(self.device)
     COMMANDS = sample_batched[0]["commands"].to(self.device)
+    WS = sample_batched[0]["steer_weight"].to(self.device)
+    WA = sample_batched[0]["accel_weight"].to(self.device)
     Y = sample_batched[1].to(self.device)
-    out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
+    out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
     optim.zero_grad()
-    loss = loss_func(out, Y).mean()
-    steer_loss = loss_func(out[:, 0], Y[:, 0]).mean().item()
-    accel_loss = loss_func(out[:, 1], Y[:, 1]).mean().item()
+
+    steer_loss = loss_func(out[:, 0], Y[:, 0])
+    accel_loss = loss_func(out[:, 1], Y[:, 1])
+    loss = (WS * steer_loss + WA * accel_loss).mean()
+
+    mae = loss_func(out, Y).mean().item()
+    steer_loss = steer_loss.mean().item()
+    accel_loss = accel_loss.mean().item()
+
     loss.backward()
     optim.step()
 
@@ -76,19 +85,22 @@ class Trainer:
     self.writer.add_scalar("running train loss", loss.item(), step)
     epoch_losses.append(loss.item())
 
+    self.writer.add_scalar("running train mae", mae, step)
+    epoch_mae.append(mae)
+
     self.writer.add_scalar("steer loss", steer_loss, step)
     epoch_steer_losses.append(steer_loss)
 
     self.writer.add_scalar("accel loss", accel_loss, step)
     epoch_accel_losses.append(accel_loss)
 
-    t.set_description(f"[train] Batch loss: {loss.item():.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
+    t.set_description(f"[train] Batch loss: {loss.item():.4f} - MAE: {mae:.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
 
-  # TODO: early stopping
   def train(self):
     loss_func = nn.L1Loss()
     self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=LR_FACTOR, patience=LR_PATIENCE, verbose=True)
+    # scheduler = KneeLRScheduler(self.optim, peak_lr, warmup_steps, explore_steps, total_steps)  # TODO: use this instead
 
     if EMA:
       self.ema_model = torch.optim.swa_utils.AveragedModel(
@@ -97,6 +109,7 @@ class Trainer:
       )
 
     losses, vlosses = [], []
+    maes, vmaes = [], []
     steer_losses, steer_vlosses = [], []
     accel_losses, accel_vlosses = [], []
 
@@ -110,17 +123,22 @@ class Trainer:
         self.model.train()
         print(f"\n[=>] Epoch {epoch+1}/{EPOCHS}")
         epoch_losses, epoch_vlosses = [], []
+        epoch_mae, epoch_vmae = [], []
         epoch_steer_losses, epoch_steer_vlosses = [], []
         epoch_accel_losses, epoch_accel_vlosses = [], []
 
         for i_batch, sample_batched in enumerate((t := tqdm(self.train_loader))):
-          self.train_step(t, step, sample_batched, loss_func, self.optim, epoch_losses, epoch_steer_losses, epoch_accel_losses)
+          self.train_step(t, step, sample_batched, loss_func, self.optim, epoch_losses, epoch_mae, epoch_steer_losses, epoch_accel_losses)
           step += 1
 
         # logging
         avg_epoch_loss = np.array(epoch_losses).mean()
         losses.append(avg_epoch_loss)
         self.writer.add_scalar("epoch training loss", avg_epoch_loss, epoch)
+
+        avg_epoch_mae = np.array(epoch_mae).mean()
+        maes.append(avg_epoch_mae)
+        self.writer.add_scalar("epoch training mae", avg_epoch_mae, epoch)
 
         avg_epoch_steer_loss = np.array(epoch_steer_losses).mean()
         steer_losses.append(avg_epoch_steer_loss)
@@ -130,16 +148,20 @@ class Trainer:
         accel_losses.append(avg_epoch_accel_loss)
         self.writer.add_scalar("epoch accel loss", avg_epoch_accel_loss, epoch)
 
-        print("[->] Epoch average training loss: %.4f - steer loss: %.4f - acceleration loss: %.4f"%(avg_epoch_loss, avg_epoch_steer_loss, avg_epoch_accel_loss))
+        print(f"[->] Epoch average training loss: {avg_epoch_loss:.4f} - MAE: {avg_epoch_mae:.4f} - steer loss: {avg_epoch_steer_loss:.4f} - acceleration loss: {avg_epoch_accel_loss:.4f}")
 
         avg_epoch_vloss = None
         if self.eval_epoch:
-          vstep = self.eval(loss_func, vstep, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses)
+          vstep = self.eval(loss_func, vstep, epoch_vlosses, epoch_vmae, epoch_steer_vlosses, epoch_accel_vlosses)
 
           # logging
           avg_epoch_vloss = np.array(epoch_vlosses).mean()
           vlosses.append(avg_epoch_vloss)
           self.writer.add_scalar("epoch validation loss", avg_epoch_vloss, epoch)
+
+          avg_epoch_vmae = np.array(epoch_vmae).mean()
+          vmaes.append(avg_epoch_vmae)
+          self.writer.add_scalar("epoch validation mae", avg_epoch_mae, epoch)
 
           avg_epoch_steer_vloss = np.array(epoch_steer_vlosses).mean()
           steer_vlosses.append(avg_epoch_steer_vloss)
@@ -149,7 +171,7 @@ class Trainer:
           accel_vlosses.append(avg_epoch_accel_vloss)
           self.writer.add_scalar("epoch accel validation loss", avg_epoch_accel_vloss, epoch)
 
-          print("[->] Epoch average validation loss: %.4f - steer loss: %.4f - acceleration loss: %.4f"%(avg_epoch_vloss, avg_epoch_steer_vloss, avg_epoch_accel_vloss))
+          print(f"[->] Epoch average validation loss: {avg_epoch_vloss:.4f} - MAE: {avg_epoch_vmae:.4f} - steer loss: {avg_epoch_steer_vloss:.4f} - acceleration loss: {avg_epoch_accel_vloss:.4f}")
 
         if self.scheduler:
           self.scheduler.step(avg_epoch_vloss)
@@ -175,12 +197,14 @@ class Trainer:
       torch.save(self.model.state_dict(), self.model_path)
     print(f"[+] Model saved at {self.model_path}")
 
-  def eval_step(self, t, vstep, sample_batched, loss_func, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses):
+  def eval_step(self, t, vstep, sample_batched, loss_func, epoch_vlosses, epoch_vmae, epoch_steer_vlosses, epoch_accel_vlosses):
     LEFT = sample_batched[0]["rgb_left"].to(self.device)
     FRONT = sample_batched[0]["rgb_front"].to(self.device)
     RIGHT = sample_batched[0]["rgb_right"].to(self.device)
     STATES = sample_batched[0]["states"].to(self.device)
     COMMANDS = sample_batched[0]["commands"].to(self.device)
+    WS = sample_batched[0]["steer_weight"].to(self.device)
+    WA = sample_batched[0]["accel_weight"].to(self.device)
     Y = sample_batched[1].to(self.device)
 
     if EMA:
@@ -188,13 +212,21 @@ class Trainer:
     else:
       out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
-    loss = loss_func(out, Y).mean()
-    steer_loss = loss_func(out[:, 0], Y[:, 0]).mean().item()
-    accel_loss = loss_func(out[:, 1], Y[:, 1]).mean().item()
+    # loss = loss_func(out, Y).mean() # TODO: calculate without MaxAbsScaler once it is implemented
+    steer_loss = loss_func(out[:, 0], Y[:, 0])
+    accel_loss = loss_func(out[:, 1], Y[:, 1])
+    loss = (WS * steer_loss + WA * accel_loss).mean()
+
+    mae = loss_func(out, Y).mean().item()
+    steer_loss = steer_loss.mean().item()
+    accel_loss = accel_loss.mean().item()
 
     # logging
     self.writer.add_scalar("running val loss", loss.item(), vstep)
     epoch_vlosses.append(loss.item())
+
+    self.writer.add_scalar("running val mae", mae, vstep)
+    epoch_vmae.append(mae)
 
     self.writer.add_scalar("steer val loss", steer_loss, vstep)
     epoch_steer_vlosses.append(steer_loss)
@@ -202,14 +234,14 @@ class Trainer:
     self.writer.add_scalar("accel val loss", accel_loss, vstep)
     epoch_accel_vlosses.append(accel_loss)
 
-    t.set_description(f"[val] Batch loss: {loss.item():.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
+    t.set_description(f"[val] Batch loss: {loss.item():.4f} - MAE: {mae:.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
 
-  def eval(self, loss_func, vstep, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses):
+  def eval(self, loss_func, vstep, epoch_vlosses, epoch_vmae, epoch_steer_vlosses, epoch_accel_vlosses):
     with torch.no_grad():
       self.model.eval()
       try:
         for i_batch, sample_batched in enumerate((t := tqdm(self.val_loader))):
-          self.eval_step(t, vstep, sample_batched, loss_func, epoch_vlosses, epoch_steer_vlosses, epoch_accel_vlosses)
+          self.eval_step(t, vstep, sample_batched, loss_func, epoch_vlosses, epoch_vmae, epoch_steer_vlosses, epoch_accel_vlosses)
           vstep += 1
       except KeyboardInterrupt:
         print("[*] Evaluation interrupted.")
