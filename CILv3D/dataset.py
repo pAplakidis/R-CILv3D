@@ -3,6 +3,7 @@ import os
 from tqdm import tqdm
 from PIL import Image
 from typing import Tuple, Optional, Dict
+from torch.utils.data import DataLoader
 
 import torch
 from torch.utils.data import Dataset
@@ -18,7 +19,7 @@ class CarlaDataset(Dataset):
     townslist: Tuple[str],
     image_size: Tuple[int, int],
     use_imagenet_norm: bool,
-    sequence_size: Optional[int] = None,
+    sequence_size = 4,
     inference = False
   ):
     super(CarlaDataset, self).__init__()
@@ -247,8 +248,8 @@ class CarlaDataset(Dataset):
         targets=targets
       )
     else:
-      ws = torch.where(torch.abs(targets[0]) > 0.5, torch.tensor(2.0), torch.tensor(1.0))
-      wa = torch.where(targets[1] == -1.0, torch.tensor(2.0), torch.tensor(1.0))
+      ws = torch.where(torch.abs(targets[0]) > 0.5, torch.tensor(3.0), torch.tensor(1.0))
+      wa = torch.where(targets[1] == -1.0, torch.tensor(2.0), torch.tensor(1.0)) # TODO: or targets[1] > 0.4
 
       inputs, targets = CarlaDataset._construct_input_dict(
         left_images=left_images,
@@ -276,3 +277,9 @@ if __name__ == "__main__":
   for k, v in dataset[0][0].items():
     print(k, v.shape)
   print("targets", dataset[0][1].shape)
+
+  # # sanity check
+  # dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False,
+  #                         prefetch_factor=4, num_workers=8, pin_memory=False)
+  # for i_batch, sample_batched in enumerate((t := tqdm(dataloader))):
+  #   pass

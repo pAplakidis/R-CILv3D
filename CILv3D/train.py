@@ -63,6 +63,6 @@ if __name__ == "__main__":
 
   trainer = Trainer(
     device, model, MODEL_PATH, train_loader, val_loader,
-    eval_epoch=True, save_checkpoints=True, early_stopping=False
+    eval_epoch=True, save_checkpoints=True, early_stopping=True
   )
   trainer.train()

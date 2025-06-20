@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import os
+import cv2
 import torch
 import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from scipy.ndimage import zoom
 
 from utils import *
 from config import *
@@ -18,8 +20,7 @@ MODEL_PATH = os.getenv("MODEL_PATH")
 TOWN = int(os.getenv("TOWN", 0))
 EPISODE = int(os.getenv("EPISODE", 0))
 
-# TOWNS = TRAIN_TOWN_LIST + EVAL_TOWN_LIST
-TOWNS = EVAL_TOWN_LIST
+TOWNS = TRAIN_TOWN_LIST + EVAL_TOWN_LIST
 TOWN_LEN = 10
 EPISODE_LEN = 1000
 
@@ -49,9 +50,45 @@ def draw_pedal(ax, accel_val):
   ax.set_yticks([])
   ax.set_xlabel("← Brake       Gas →")
 
+def get_heatmap(model, RGB_vid, layerout, action, downsample=True):
+  pred_weights = model.linear.weight.data.detach().cpu().numpy().transpose()  # weights of the prediction layer
+
+  # Compute cam for every kernel
+  cam = np.zeros(dtype = np.float32, shape = layerout.shape[0:3])
+  for i, w in enumerate(pred_weights[:, action]): # action is 0 for steer, 1 for accel
+    print(pred_weights.shape, cam.shape, layerout.shape, w, i)
+    # FIXME: this won't work since linear is not directly connected to uniformer
+    cam += w * layerout[:, :, :, i].numpy()
+
+  # Resize CAM to frame level
+  cam = zoom(cam, (1, 32, 32)) # output map is 8x7x7, so multiply to get to 8x224x224 (original image size)
+  if not downsample:
+    # interpolate
+    tmp_cam = torch.from_numpy(cam)
+    T, H, W = tmp_cam.shape
+    tmp_cam = tmp_cam.view(T, H*W).permute(1, 0).unsqueeze(0)
+    tmp_cam = torch.nn.functional.interpolate(tmp_cam, size=T*2, mode='linear')
+    tmp_cam = tmp_cam.view(H, W, T*2).permute(2, 0, 1)
+    cam = tmp_cam.numpy()
+
+  # normalize
+  cam -= np.min(cam)
+  cam /= np.max(cam) - np.min(cam)
+
+  heatmaps = []
+  for i in range(0, cam.shape[0]):
+    #   Create colourmap
+    heatmap = cv2.applyColorMap(np.uint8(255*cam[i]), cv2.COLORMAP_JET)
+
+    # Create frame with heatmap
+    heatframe = heatmap//2 + RGB_vid[0][i]//2
+    heatmaps.append(heatframe[:, :, ::-1]/255.)
+      
+  return heatmaps
+
 
 # TODO: cleanup into functions
-# TODO: show command and state values
+# TODO: show heatmaps
 if __name__ == "__main__":
   if not MODEL_PATH:
     print("Usage: MODEL_PATH=<path_to_model> TOWN=<town_idx> EPISODE=<episode_idx> ./inference.py")
@@ -126,9 +163,14 @@ if __name__ == "__main__":
       STATES = data[0]["states"].unsqueeze(0).to(device)
       CMD = data[0]["commands"].unsqueeze(0).to(device)
       Y = data[1].to(device)
-      out = model(LEFT, FRONT, RIGHT, STATES, CMD)
 
+      out, layerouts = model(LEFT, FRONT, RIGHT, STATES, CMD)
+      layerout_left, layerout_front, layerout_right = layerouts
       command = COMMANDS[torch.argmax(data[0]["commands"][-1]).item()]
+
+      # left_heatmaps = get_heatmap(model, LEFT, layerout_left, action=0, downsample=True)
+      # front_heatmaps = get_heatmap(model, FRONT, layerout_front, action=0, downsample=True)
+      # right_heatmaps = get_heatmap(model, RIGHT, layerout_right, action=0, downsample=True)
 
       # predictions post processing
       pred = out[0].cpu().numpy()

@@ -52,6 +52,10 @@ class Trainer:
       torch.save(self.ema_model.module.state_dict(), chpt_path)
     else:
       torch.save(self.model.state_dict(), chpt_path)
+
+    if self.scheduler:
+      torch.save(self.scheduler.state_dict(), chpt_path.replace(".pt", f"_scheduler.pt"))
+
     print(f"[+] Checkpoint saved at {chpt_path}. New min eval loss {min_loss}")
 
   def train_step(self, t, step, sample_batched, loss_func, optim, epoch_losses, epoch_mae, epoch_steer_losses, epoch_accel_losses):
@@ -64,7 +68,7 @@ class Trainer:
     WA = sample_batched[0]["accel_weight"].to(self.device)
     Y = sample_batched[1].to(self.device)
 
-    out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
+    out, _ = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
     optim.zero_grad()
 
     steer_loss = loss_func(out[:, 0], Y[:, 0])
@@ -77,6 +81,7 @@ class Trainer:
 
     loss.backward()
     optim.step()
+    # if self.scheduler: self.scheduler.step()
 
     if EMA:
       self.ema_model.update_parameters(self.model)
@@ -97,10 +102,10 @@ class Trainer:
     t.set_description(f"[train] Batch loss: {loss.item():.4f} - MAE: {mae:.4f} - Steer loss: {steer_loss:.4f} - Accel loss: {accel_loss:.4f}")
 
   def train(self):
-    loss_func = nn.L1Loss()
+    loss_func = nn.L1Loss(reduction='none')
     self.optim = torch.optim.AdamW(self.model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optim, mode='min', factor=LR_FACTOR, patience=LR_PATIENCE, verbose=True)
-    # scheduler = KneeLRScheduler(self.optim, peak_lr, warmup_steps, explore_steps, total_steps)  # TODO: use this instead
+    # self.scheduler = KneeLRScheduler(self.optim, peak_lr=LR)  # TODO: use this
 
     if EMA:
       self.ema_model = torch.optim.swa_utils.AveragedModel(
@@ -180,8 +185,9 @@ class Trainer:
         # TODO: self.scheduler.load_state_dict for resume training
         # save checkpoints or early stop
         if self.save_checkpoints and avg_epoch_vloss is not None and avg_epoch_vloss < min_epoch_vloss:
-          min_epoch_vloss = avg_epoch_vloss
+          min_epoch_vloss = avg_epoch_vloss # TODO: use vmae instead of vloss (?)
           self.save_checkpoint(min_epoch_vloss)
+          stop_cnt = 0
         else:
           stop_cnt += 1
           if self.early_stopping and stop_cnt >= EARLY_STOP_EPOCHS:
@@ -197,6 +203,9 @@ class Trainer:
       torch.save(self.model.state_dict(), self.model_path)
     print(f"[+] Model saved at {self.model_path}")
 
+    if self.scheduler:
+      torch.save(self.scheduler.state_dict(), self.model_path.replace(".pt", f"_scheduler.pt"))
+
   def eval_step(self, t, vstep, sample_batched, loss_func, epoch_vlosses, epoch_vmae, epoch_steer_vlosses, epoch_accel_vlosses):
     LEFT = sample_batched[0]["rgb_left"].to(self.device)
     FRONT = sample_batched[0]["rgb_front"].to(self.device)
@@ -208,9 +217,9 @@ class Trainer:
     Y = sample_batched[1].to(self.device)
 
     if EMA:
-      out = self.ema_model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
+      out, _ = self.ema_model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
     else:
-      out = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
+      out, _ = self.model(LEFT, FRONT, RIGHT, STATES, COMMANDS)
 
     # loss = loss_func(out, Y).mean() # TODO: calculate without MaxAbsScaler once it is implemented
     steer_loss = loss_func(out[:, 0], Y[:, 0])

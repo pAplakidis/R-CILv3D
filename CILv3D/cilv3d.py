@@ -67,7 +67,8 @@ class CILv3D(nn.Module):
       uniformer_state_dict = torch.load("models/state_dicts/uniformer_small_k400_16x8.pth", map_location=self.device)
       self.uniformer = uniformer_small()
     elif self.uniformer_version == UniformerVersion.BASE:
-      uniformer_state_dict = torch.load("models/state_dicts/uniformer_base_k400_32x4.pth", map_location=self.device)
+      # uniformer_state_dict = torch.load("models/state_dicts/uniformer_base_k400_32x4.pth", map_location=self.device)
+      uniformer_state_dict = torch.load("models/state_dicts/uniformer_base_k400_8x8.pth", map_location=self.device)
       self.uniformer = uniformer_base()
     self.uniformer.load_state_dict(uniformer_state_dict)
     self.uniformer.head = nn.Identity()
@@ -88,14 +89,16 @@ class CILv3D(nn.Module):
     if EMA:
       state_size = self.state_size - 2 if self.use_revin else self.state_size
       self.state_embedding = nn.Sequential(
-        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+        # nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size//2), # TODO: is this correct?
         nn.Flatten(),
-        nn.Linear(self.filters_1d * (state_size - self.sequence_size + 1), self.embedding_size),
+        # nn.Linear(self.filters_1d * (state_size - self.sequence_size + 1), self.embedding_size),
+        nn.Linear(128 if self.sequence_size == 8 else 192, self.embedding_size),  # TODO: dynamic input size based on state_size and sequence_size
         nn.Dropout(self.linear_dropout)
       )
     else:
       self.state_embedding = nn.Sequential(
-        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size//2),
         nn.BatchNorm1d(self.filters_1d),
         nn.Flatten(),
         nn.Linear(self.filters_1d * (state_size - self.sequence_size + 1), self.embedding_size),
@@ -105,14 +108,16 @@ class CILv3D(nn.Module):
     # command embeddings
     if EMA:
       self.command_embedding = nn.Sequential(
-        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+        # nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size//2),  # TODO: is this correct?
         nn.Flatten(),
-        nn.Linear(self.filters_1d * (self.command_size - self.sequence_size + 1), self.embedding_size), # For Conv1d
+        # nn.Linear(self.filters_1d * (self.command_size - self.sequence_size + 1), self.embedding_size), # For Conv1d
+        nn.Linear(96 if self.sequence_size == 8 else 160, self.embedding_size), # TODO: dynamic input size based on command_size and sequence_size
         nn.Dropout(self.linear_dropout)
       )
     else:
       self.command_embedding = nn.Sequential(
-        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size),
+        nn.Conv1d(in_channels=self.sequence_size, out_channels=self.filters_1d, kernel_size=self.sequence_size//2),
         nn.BatchNorm1d(self.filters_1d),
         nn.Flatten(),
         nn.Linear(self.filters_1d * (self.command_size - self.sequence_size + 1), self.embedding_size), # For Conv1d
@@ -153,8 +158,10 @@ class CILv3D(nn.Module):
   ) -> torch.Tensor:
     """
     left: (B, C, T, H, W)
-    states: (B, sequence_size, state_size)
-    commands: (B, sequence_size, command_size)
+    front: (B, C, T, H, W)
+    right: (B, C, T, H, W)
+    states: (B, T, state_size)
+    commands: (B, T, command_size)
     """
 
     # embeddings
@@ -171,13 +178,14 @@ class CILv3D(nn.Module):
     control_embedding = control_embedding.unsqueeze(1).repeat(1, 3, 1)  # (B, 3, embedding_size)
 
     # vision backbone
-    vision_emb_left, _ = self.uniformer(left_img)
-    vision_emb_front, _ = self.uniformer(front_img)
-    vision_emb_right, _ = self.uniformer(right_img)
+    vision_emb_left, layerout_left = self.uniformer(left_img)
+    vision_emb_front, layerout_front = self.uniformer(front_img)
+    vision_emb_right, layerout_right = self.uniformer(right_img)
 
-    # NOTE: uniformer returns a tuple (features, layerout), where:
-    # layerout = y[-1] # B, C, T, H, W
-    # layerout = layerout[0].detach().cpu().permute(1, 2, 3, 0)
+    # for visualization (layer out are intermediate features)
+    layerout_left = layerout_left[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
+    layerout_front = layerout_front[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
+    layerout_right = layerout_right[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
 
     # embeddings fusion
     vision_embeddings = torch.cat([vision_emb_left.unsqueeze(1), vision_emb_front.unsqueeze(1), vision_emb_right.unsqueeze(1)], dim=1)  # (B, 3, 512)
@@ -189,7 +197,7 @@ class CILv3D(nn.Module):
     linear_in = transformer_out + command_emb.repeat(1, 3)
     out = self.linear(linear_in)
     if self.use_revin: out = self.revin_target(out, "denorm")
-    return out
+    return out, [layerout_left, layerout_front, layerout_right]
 
 
 if __name__ == "__main__":
@@ -205,5 +213,5 @@ if __name__ == "__main__":
 
   states = torch.randn(bs, SEQUENCE_SIZE, 7).to(device)   # B, T, S
   commands = torch.randn(bs, SEQUENCE_SIZE, 6).to(device) # B, T, C
-  out = model(vid, vid, vid, states, commands)
+  out, _ = model(vid, vid, vid, states, commands)
   print(out.shape)
