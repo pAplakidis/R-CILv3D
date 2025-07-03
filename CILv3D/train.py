@@ -58,6 +58,7 @@ if __name__ == "__main__":
   if CHECKPOINT:
     print(f"[+] Loading checkpoint from {CHECKPOINT}")
     model.load_state_dict(torch.load(CHECKPOINT))
+    # TODO: self.scheduler.load_state_dict for resume training
   model.to(device)
   # model = torch.compile(model)
 

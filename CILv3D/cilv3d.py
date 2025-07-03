@@ -27,6 +27,7 @@ class CILv3DConfig:
   linear_dropout = 0.4
   use_revin = False
   uniformer_version = UniformerVersion.BASE
+  future_control_timesteps = FUTURE_CONTROL_TIMESTEPS
 
 
 class CILv3D(nn.Module):
@@ -46,6 +47,7 @@ class CILv3D(nn.Module):
     self.linear_dropout = cfg.linear_dropout
     self.use_revin = cfg.use_revin
     self.uniformer_version = cfg.uniformer_version
+    self.future_control_timesteps = cfg.future_control_timesteps
 
     print(
       f"[*] CILv3D configuration:\n"
@@ -133,7 +135,7 @@ class CILv3D(nn.Module):
       activation="gelu"
     )
     self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=self.transformer_layers)
-    self.linear = nn.Linear(3 * self.embedding_size, 2)
+    self.linear = nn.Linear(3 * self.embedding_size, 2 * self.future_control_timesteps) # (steer, acceleration) * future_control_timesteps
 
   def positional_encoding(self, batch_size: int, length: int, depth: int) -> torch.Tensor:
     assert depth % 2 == 0, "Depth must be even."
@@ -194,8 +196,8 @@ class CILv3D(nn.Module):
 
     # driving policy (transformer + linear)
     transformer_out = self.transformer_encoder(self.layernorm(z)).flatten(1, 2)
-    linear_in = transformer_out + command_emb.repeat(1, 3)
-    out = self.linear(linear_in)
+    linear_in = transformer_out + control_embedding.flatten(1)
+    out = self.linear(linear_in).reshape(-1, self.future_control_timesteps, 2)  # (B, future_control_timesteps, 2)
     if self.use_revin: out = self.revin_target(out, "denorm")
     return out, [layerout_left, layerout_front, layerout_right]
 

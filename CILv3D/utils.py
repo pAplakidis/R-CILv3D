@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import List, Tuple
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from config import *
 
@@ -62,8 +62,12 @@ def normalize_states(states_df: pd.DataFrame) -> pd.DataFrame:
   states_df['compass_rads'] /= 6.283
   states_df['gps_compass_bearing'] /= np.pi
 
-  # steer = states_df["steer"].values
-  # states_df['steer'] = (steer - steer.min()) / (steer.max() - steer.min())
+  steer = states_df["steer"].values
+  # states_df["steer"] = (steer - steer.min()) / (steer.max() - steer.min())  # minmax
+  # scaler = StandardScaler()
+  # states_df["steer"] = scaler.fit_transform(steer.reshape(-1, 1)) # standard scaling
+  states_df["steer"] = (steer + 1.0) / 2  # normalize to [0, 1]
+
   # pedal_acceleration = states_df["pedal_acceleration"].values
   # states_df['pedal_acceleration'] = (pedal_acceleration - pedal_acceleration.min()) / (pedal_acceleration.max() - pedal_acceleration.min())
 

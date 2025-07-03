@@ -178,7 +178,7 @@ class CarlaDataset(Dataset):
     assert len(self.left_images) == len(self.front_images) == len(self.right_images) == len(self.states) == len(self.commands)
 
   def __len__(self):
-    return len(self.states) - SEQUENCE_SIZE
+    return len(self.states) - SEQUENCE_SIZE - FUTURE_CONTROL_TIMESTEPS + 1
 
   # TODO: inference case could be cleaner (2 functions, one for train/val and one for inference)
   def __getitem__(self, idx):
@@ -233,7 +233,8 @@ class CarlaDataset(Dataset):
 
     states = torch.tensor(self.states[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
     commands = torch.tensor(self.commands[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
-    targets = torch.tensor(self.targets[idx+SEQUENCE_SIZE], dtype=torch.float32)
+    targets = [self.targets[idx + SEQUENCE_SIZE - 1 + i] for i in range(FUTURE_CONTROL_TIMESTEPS)]
+    targets = torch.tensor(np.stack(targets, axis=1), dtype=torch.float32).transpose(0, 1)  # (FUTURE_CONTROL_TIMESTEPS, 2)
 
     if self.inference:
       inputs, targets = CarlaDataset._construct_input_dict_inference(
@@ -248,8 +249,9 @@ class CarlaDataset(Dataset):
         targets=targets
       )
     else:
-      ws = torch.where(torch.abs(targets[0]) > 0.5, torch.tensor(3.0), torch.tensor(1.0))
-      wa = torch.where(targets[1] == -1.0, torch.tensor(2.0), torch.tensor(1.0)) # TODO: or targets[1] > 0.4
+      # ws = torch.where(torch.abs(targets[0]) > STEER_LOSS_THRESH, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))
+      ws = torch.where(targets[:, 0] != 0.0, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))  # TODO: normalized steering
+      wa = torch.where(targets[:, 1] == -1.0, torch.tensor(PEDAL_ACC_WEIGHT), torch.tensor(1.0)) # TODO: or targets[1] > 0.4
 
       inputs, targets = CarlaDataset._construct_input_dict(
         left_images=left_images,
@@ -274,11 +276,13 @@ if __name__ == "__main__":
     inference=True
   )
 
-  for k, v in dataset[0][0].items():
+  idx = len(dataset) - 1
+  sample = dataset[idx]
+  for k, v in sample[0].items():
     print(k, v.shape)
-  print("targets", dataset[0][1].shape)
+  print("targets", sample[1].shape)
 
-  # # sanity check
+  # sanity check
   # dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False,
   #                         prefetch_factor=4, num_workers=8, pin_memory=False)
   # for i_batch, sample_batched in enumerate((t := tqdm(dataloader))):

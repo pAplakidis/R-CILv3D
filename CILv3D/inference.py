@@ -173,13 +173,14 @@ if __name__ == "__main__":
       # right_heatmaps = get_heatmap(model, RIGHT, layerout_right, action=0, downsample=True)
 
       # predictions post processing
-      pred = out[0].cpu().numpy()
+      pred = out[0][0].cpu().numpy()  # get batch idx 0 and first timestep prediction
       pred_steer = pred[0]
       pred_accel = pred[1]
 
+      # get ground truth of the first step
       gt = Y.cpu().numpy()
-      gt_steer = gt[0]
-      gt_accel = gt[1]
+      gt_steer = gt[0][0]
+      gt_accel = gt[0][1]
 
       print(f"MODEL - Steer: {pred_steer}, Accel: {pred_accel}")
       print(f"GT - Steer: {gt_steer}, Accel: {gt_accel}")
