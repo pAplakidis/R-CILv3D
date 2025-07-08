@@ -250,7 +250,8 @@ class CarlaDataset(Dataset):
       )
     else:
       # ws = torch.where(torch.abs(targets[0]) > STEER_LOSS_THRESH, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))
-      ws = torch.where(targets[:, 0] != 0.0, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))  # TODO: normalized steering
+      steer_center = 0.5 if NORMALIZE_STATES else 0.0
+      ws = torch.where(targets[:, 0] != steer_center, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))
       wa = torch.where(targets[:, 1] == -1.0, torch.tensor(PEDAL_ACC_WEIGHT), torch.tensor(1.0)) # TODO: or targets[1] > 0.4
 
       inputs, targets = CarlaDataset._construct_input_dict(
@@ -282,8 +283,8 @@ if __name__ == "__main__":
     print(k, v.shape)
   print("targets", sample[1].shape)
 
-  # sanity check
+  # # sanity check
   # dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False,
-  #                         prefetch_factor=4, num_workers=8, pin_memory=False)
+  #                          prefetch_factor=4, num_workers=8, pin_memory=False)
   # for i_batch, sample_batched in enumerate((t := tqdm(dataloader))):
   #   pass
