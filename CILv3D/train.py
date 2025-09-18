@@ -18,9 +18,13 @@ N_WORKERS = psutil.cpu_count(logical=False)
 PREFETCH_FACTOR = psutil.cpu_count(logical=False) // 2
 PIN_MEMORY = not EMA
 
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+torch.set_warn_always(False)
+
 
 if __name__ == "__main__":
-  device = torch.device("cuda" if torch.cuda.is_available else "cpu")
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   print("[+] Using device:", device)
 
   os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
@@ -55,15 +59,12 @@ if __name__ == "__main__":
 
   # torch.set_float32_matmul_precision('high')
   model = CILv3D(device=device)
-  if CHECKPOINT:
-    print(f"[+] Loading checkpoint from {CHECKPOINT}")
-    model.load_state_dict(torch.load(CHECKPOINT))
-    # TODO: self.scheduler.load_state_dict for resume training
   model.to(device)
   # model = torch.compile(model)
 
   trainer = Trainer(
     device, model, MODEL_PATH, train_loader, val_loader,
-    eval_epoch=True, save_checkpoints=True, early_stopping=True
+    checkpoint_path=CHECKPOINT, writer_path=WRITER_PATH, eval_epoch=True,
+    save_checkpoints=True, early_stopping=True
   )
   trainer.train()

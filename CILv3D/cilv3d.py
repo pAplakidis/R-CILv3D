@@ -66,11 +66,11 @@ class CILv3D(nn.Module):
     )
 
     if self.uniformer_version == UniformerVersion.SMALL:
-      uniformer_state_dict = torch.load("models/state_dicts/uniformer_small_k400_16x8.pth", map_location=self.device)
+      uniformer_state_dict = torch.load("models/state_dicts/uniformer_small_k400_16x8.pth", map_location=self.device, weights_only=False)
       self.uniformer = uniformer_small()
     elif self.uniformer_version == UniformerVersion.BASE:
       # uniformer_state_dict = torch.load("models/state_dicts/uniformer_base_k400_32x4.pth", map_location=self.device)
-      uniformer_state_dict = torch.load("models/state_dicts/uniformer_base_k400_8x8.pth", map_location=self.device)
+      uniformer_state_dict = torch.load("models/state_dicts/uniformer_base_k400_8x8.pth", map_location=self.device, weights_only=False)
       self.uniformer = uniformer_base()
     self.uniformer.load_state_dict(uniformer_state_dict)
     self.uniformer.head = nn.Identity()

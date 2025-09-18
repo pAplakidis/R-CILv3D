@@ -50,9 +50,8 @@ def load_states(filepath: str) -> Tuple[pd.DataFrame, List[int]]:
   if not states_df['frame'].is_monotonic_increasing:
       states_df.sort_values(by='frame', inplace=True, ignore_index=True)
 
-  states = states_df.drop(columns=['frame'])
   frame_ids = states_df['frame'].to_list()
-  return states, frame_ids
+  return states_df, frame_ids
 
 # TODO: MaxAbsScaler on steer and pedal_acceleration (inputs and targets) + plot
 def normalize_states(states_df: pd.DataFrame) -> pd.DataFrame:
