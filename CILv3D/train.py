@@ -13,6 +13,7 @@ from trainer import Trainer
 
 MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/CILv3D/CILv3D.pt")
 CHECKPOINT = os.getenv("CHECKPOINT", None)
+WRITER_PATH = os.getenv("WRITER_PATH", None)
 
 N_WORKERS = psutil.cpu_count(logical=False)
 PREFETCH_FACTOR = psutil.cpu_count(logical=False) // 2
