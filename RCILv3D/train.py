@@ -6,17 +6,17 @@ from torch.utils.data import DataLoader
 
 from config import *
 from dataset import *
-from cilv3d import CILv3D
+from RCILv3D.rcilv3d import RCILv3D
 from trainer import Trainer
 
-# EXAMPLE USAGE: MODEL_PATH=checkpoints/CILv3D.pt CHECKPOINT=checkpoints/CILv3D_best.py ./train.py
+# EXAMPLE USAGE: MODEL_PATH=checkpoints/RCILv3D.pt CHECKPOINT=checkpoints/CILv3D_best.py ./train.py
 
-MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/CILv3D/CILv3D.pt")
+MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/sim2real/CILv3D_lookahead_5.pt")
 CHECKPOINT = os.getenv("CHECKPOINT", None)
 WRITER_PATH = os.getenv("WRITER_PATH", None)
 
-N_WORKERS = psutil.cpu_count(logical=False)
-PREFETCH_FACTOR = psutil.cpu_count(logical=False) // 2
+N_WORKERS = 8
+PREFETCH_FACTOR = 4
 PIN_MEMORY = not EMA
 
 import warnings
@@ -59,7 +59,7 @@ if __name__ == "__main__":
                           prefetch_factor=PREFETCH_FACTOR, num_workers=N_WORKERS, pin_memory=PIN_MEMORY)
 
   # torch.set_float32_matmul_precision('high')
-  model = CILv3D(device=device)
+  model = RCILv3D(device=device)
   model.to(device)
   # model = torch.compile(model)
 

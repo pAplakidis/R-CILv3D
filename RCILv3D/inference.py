@@ -12,7 +12,7 @@ from scipy.ndimage import zoom
 from utils import *
 from config import *
 from dataset import CarlaDataset  
-from cilv3d import CILv3D
+from RCILv3D.rcilv3d import RCILv3D
 
 # EXAMPLE USAGE: MODEL_PATH=checkpoints/CILv3D_new/CILv3D_e48_best.pt TOWN=1 EPISODE=8 ./inference.py
 
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     inference=True
   )
 
-  model = CILv3D(device=device)
+  model = RCILv3D(device=device)
   if MODEL_PATH:
     print(f"[+] Loading checkpoint from {MODEL_PATH}")
     model.load_state_dict(torch.load(MODEL_PATH))

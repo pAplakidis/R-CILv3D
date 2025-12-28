@@ -1,3 +1,5 @@
+import os
+import shutil
 import numpy as np
 import pandas as pd
 from typing import List, Tuple
@@ -42,6 +44,10 @@ def preprocess_states(states_df: pd.DataFrame) -> pd.DataFrame:
   return states_df
 
 def load_states(filepath: str) -> Tuple[pd.DataFrame, List[int]]:
+  if not os.path.exists(filepath):
+    src_file = filepath.replace("carla-cityscapes", "carla")
+    shutil.copyfile(src_file, filepath)
+
   states_df = pd.read_csv(filepath)
   states_df = preprocess_states(states_df=states_df)
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import psutil
 from tqdm import tqdm
 from PIL import Image
 from typing import Tuple, Optional, Dict
@@ -175,96 +176,99 @@ class CarlaDataset(Dataset):
           self.right_images.append(os.path.join(right_images_path, image_path))
 
     # print(len(self.left_images), len(self.front_images), len(self.right_images), len(self.states), len(self.commands))
-    assert len(self.left_images) == len(self.front_images) == len(self.right_images) == len(self.states) == len(self.commands)
+    # assert len(self.left_images) == len(self.front_images) == len(self.right_images) == len(self.states) == len(self.commands)
 
   def __len__(self):
     return len(self.states) - SEQUENCE_SIZE - FUTURE_CONTROL_TIMESTEPS + 1
 
   # TODO: inference case could be cleaner (2 functions, one for train/val and one for inference)
   def __getitem__(self, idx):
-    left_images = []
-    front_images = []
-    right_images = []
-    states = []
-    commands = []
-    targets = []
+    try:
+      left_images = []
+      front_images = []
+      right_images = []
+      states = []
+      commands = []
+      targets = []
 
-    # for display during inference
-    if self.inference:
-      left_images_disp = []
-      front_images_disp = []
-      right_images_disp = []
-
-    for i in range(SEQUENCE_SIZE):
+      # for display during inference
       if self.inference:
-        left_image, left_image_disp = self.load_image(self.left_images[idx+i])
-        front_image, front_image_disp = self.load_image(self.front_images[idx+i])
-        right_image, right_image_disp = self.load_image(self.right_images[idx+i])
+        left_images_disp = []
+        front_images_disp = []
+        right_images_disp = []
+
+      for i in range(SEQUENCE_SIZE):
+        if self.inference:
+          left_image, left_image_disp = self.load_image(self.left_images[idx+i])
+          front_image, front_image_disp = self.load_image(self.front_images[idx+i])
+          right_image, right_image_disp = self.load_image(self.right_images[idx+i])
+        else:
+          left_image = self.load_image(self.left_images[idx+i])
+          front_image = self.load_image(self.front_images[idx+i])
+          right_image = self.load_image(self.right_images[idx+i])
+
+        mean = torch.tensor(self._imagenet_mean, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
+        std = torch.tensor(self._imagenet_std, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
+
+        if self.inference:
+          left_images_disp.append(left_image_disp)
+          front_images_disp.append(front_image_disp)
+          right_images_disp.append(right_image_disp)
+
+        if self.use_imagenet_norm:
+          left_image = (left_image - mean) / std
+          front_image = (front_image - mean) / std
+          right_image = (right_image - mean) / std
+
+        left_images.append(left_image)
+        front_images.append(front_image)
+        right_images.append(right_image)
+
+      left_images = torch.stack(left_images, dim=1)
+      front_images = torch.stack(front_images, dim=1)
+      right_images = torch.stack(right_images, dim=1)
+
+      if self.inference:
+        left_images_disp = np.stack(left_images_disp, axis=0)
+        front_images_disp = np.stack(front_images_disp, axis=0)
+        right_images_disp = np.stack(right_images_disp, axis=0)
+
+      states = torch.tensor(self.states[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
+      commands = torch.tensor(self.commands[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
+      targets = [self.targets[idx + SEQUENCE_SIZE - 1 + i] for i in range(FUTURE_CONTROL_TIMESTEPS)]
+      targets = torch.tensor(np.stack(targets, axis=1), dtype=torch.float32).transpose(0, 1)  # (FUTURE_CONTROL_TIMESTEPS, 2)
+
+      if self.inference:
+        inputs, targets = CarlaDataset._construct_input_dict_inference(
+          left_images=left_images,
+          front_images=front_images,
+          right_images=right_images,
+          left_images_disp=left_images_disp,
+          front_images_disp=front_images_disp,
+          right_images_disp=right_images_disp,
+          states=states,
+          commands=commands,
+          targets=targets
+        )
       else:
-        left_image = self.load_image(self.left_images[idx+i])
-        front_image = self.load_image(self.front_images[idx+i])
-        right_image = self.load_image(self.right_images[idx+i])
+        # ws = torch.where(torch.abs(targets[0]) > STEER_LOSS_THRESH, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))
+        steer_center = 0.5 if NORMALIZE_STATES else 0.0
+        ws = torch.where(targets[:, 0] != steer_center, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))
+        wa = torch.where(targets[:, 1] == -1.0, torch.tensor(PEDAL_ACC_WEIGHT), torch.tensor(1.0)) # TODO: or targets[1] > 0.4
 
-      mean = torch.tensor(self._imagenet_mean, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
-      std = torch.tensor(self._imagenet_std, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
-
-      if self.inference:
-        left_images_disp.append(left_image_disp)
-        front_images_disp.append(front_image_disp)
-        right_images_disp.append(right_image_disp)
-
-      if self.use_imagenet_norm:
-        left_image = (left_image - mean) / std
-        front_image = (front_image - mean) / std
-        right_image = (right_image - mean) / std
-
-      left_images.append(left_image)
-      front_images.append(front_image)
-      right_images.append(right_image)
-
-    left_images = torch.stack(left_images, dim=1)
-    front_images = torch.stack(front_images, dim=1)
-    right_images = torch.stack(right_images, dim=1)
-
-    if self.inference:
-      left_images_disp = np.stack(left_images_disp, axis=0)
-      front_images_disp = np.stack(front_images_disp, axis=0)
-      right_images_disp = np.stack(right_images_disp, axis=0)
-
-    states = torch.tensor(self.states[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
-    commands = torch.tensor(self.commands[idx:idx+SEQUENCE_SIZE], dtype=torch.float32)
-    targets = [self.targets[idx + SEQUENCE_SIZE - 1 + i] for i in range(FUTURE_CONTROL_TIMESTEPS)]
-    targets = torch.tensor(np.stack(targets, axis=1), dtype=torch.float32).transpose(0, 1)  # (FUTURE_CONTROL_TIMESTEPS, 2)
-
-    if self.inference:
-      inputs, targets = CarlaDataset._construct_input_dict_inference(
-        left_images=left_images,
-        front_images=front_images,
-        right_images=right_images,
-        left_images_disp=left_images_disp,
-        front_images_disp=front_images_disp,
-        right_images_disp=right_images_disp,
-        states=states,
-        commands=commands,
-        targets=targets
-      )
-    else:
-      # ws = torch.where(torch.abs(targets[0]) > STEER_LOSS_THRESH, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))
-      steer_center = 0.5 if NORMALIZE_STATES else 0.0
-      ws = torch.where(targets[:, 0] != steer_center, torch.tensor(STEER_WEIGHT), torch.tensor(1.0))
-      wa = torch.where(targets[:, 1] == -1.0, torch.tensor(PEDAL_ACC_WEIGHT), torch.tensor(1.0)) # TODO: or targets[1] > 0.4
-
-      inputs, targets = CarlaDataset._construct_input_dict(
-        left_images=left_images,
-        front_images=front_images,
-        right_images=right_images,
-        steer_weight=ws,
-        accel_weight=wa,
-        states=states,
-        commands=commands,
-        targets=targets
-      )
-    return inputs, targets
+        inputs, targets = CarlaDataset._construct_input_dict(
+          left_images=left_images,
+          front_images=front_images,
+          right_images=right_images,
+          steer_weight=ws,
+          accel_weight=wa,
+          states=states,
+          commands=commands,
+          targets=targets
+        )
+      return inputs, targets
+    except:
+      self.__getitem__(idx-3)
 
 
 if __name__ == "__main__":
@@ -274,17 +278,20 @@ if __name__ == "__main__":
     image_size=IMAGE_SIZE,
     use_imagenet_norm=USE_IMAGENET_NORM,
     sequence_size=SEQUENCE_SIZE,
-    inference=True
+    inference=False
   )
 
+  print(len(dataset))
   idx = len(dataset) - 1
   sample = dataset[idx]
   for k, v in sample[0].items():
     print(k, v.shape)
   print("targets", sample[1].shape)
 
-  # # sanity check
-  # dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False,
-  #                          prefetch_factor=4, num_workers=8, pin_memory=False)
-  # for i_batch, sample_batched in enumerate((t := tqdm(dataloader))):
-  #   pass
+  # sanity check
+  N_WORKERS = 8
+  PREFETCH_FACTOR = 4
+  dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False,
+                           prefetch_factor=PREFETCH_FACTOR, num_workers=N_WORKERS, persistent_workers=True, pin_memory=False)
+  for i_batch, sample_batched in enumerate((t := tqdm(dataloader))):
+    pass

@@ -1,5 +1,6 @@
 .*.swp
 **/__pycache__/
 venv/
-CILv3D/checkpoints/
+RCILv3D/checkpoints/
 data/
+**/.ipynb_checkpoints

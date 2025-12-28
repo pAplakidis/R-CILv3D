@@ -14,7 +14,7 @@ class UniformerVersion(Enum):
 
 
 @dataclass
-class CILv3DConfig:
+class RCILv3DConfig:
   sequence_size = SEQUENCE_SIZE
   state_size = 7
   command_size = 6
@@ -30,9 +30,9 @@ class CILv3DConfig:
   future_control_timesteps = FUTURE_CONTROL_TIMESTEPS
 
 
-class CILv3D(nn.Module):
-  def __init__(self, device, cfg = CILv3DConfig()):
-    super(CILv3D, self).__init__()
+class RCILv3D(nn.Module):
+  def __init__(self, device, cfg = RCILv3DConfig()):
+    super().__init__()
 
     self.device = device
     self.sequence_size = cfg.sequence_size
@@ -50,7 +50,7 @@ class CILv3D(nn.Module):
     self.future_control_timesteps = cfg.future_control_timesteps
 
     print(
-      f"[*] CILv3D configuration:\n"
+      f"[*] RCILv3D configuration:\n"
       f"  sequence_size: {self.sequence_size}\n"
       f"  state_size: {self.state_size}\n"
       f"  command_size: {self.command_size}\n"
@@ -185,9 +185,12 @@ class CILv3D(nn.Module):
     vision_emb_right, layerout_right = self.uniformer(right_img)
 
     # for visualization (layer out are intermediate features)
-    layerout_left = layerout_left[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
-    layerout_front = layerout_front[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
-    layerout_right = layerout_right[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
+    # layerout_left = layerout_left[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
+    # layerout_front = layerout_front[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
+    # layerout_right = layerout_right[-1][0].detach().cpu().permute(1, 2, 3, 0)  # (T, H, W, C)
+    layerout_left  = layerout_left[-1]   # (B, C, T, H, W)
+    layerout_front = layerout_front[-1]
+    layerout_right = layerout_right[-1]
 
     # embeddings fusion
     vision_embeddings = torch.cat([vision_emb_left.unsqueeze(1), vision_emb_front.unsqueeze(1), vision_emb_right.unsqueeze(1)], dim=1)  # (B, 3, 512)
@@ -204,7 +207,7 @@ class CILv3D(nn.Module):
 
 if __name__ == "__main__":
   device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-  model = CILv3D(device).to(device)
+  model = RCILv3D(device).to(device)
   print(model)
 
   bs = 12

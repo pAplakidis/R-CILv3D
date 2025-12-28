@@ -1,2 +1,2 @@
-CILv3D/models/state_dicts/** filter=lfs diff=lfs merge=lfs -text
-CILv3D/models/state_dicts/*.pth filter=lfs diff=lfs merge=lfs -text
+RCILv3D/models/state_dicts/** filter=lfs diff=lfs merge=lfs -text
+RCILv3D/models/state_dicts/*.pth filter=lfs diff=lfs merge=lfs -text
