@@ -191,6 +191,9 @@ class RCILv3D(nn.Module):
     layerout_left  = layerout_left[-1]   # (B, C, T, H, W)
     layerout_front = layerout_front[-1]
     layerout_right = layerout_right[-1]
+    layerout_left.retain_grad()
+    layerout_front.retain_grad()
+    layerout_right.retain_grad()
 
     # embeddings fusion
     vision_embeddings = torch.cat([vision_emb_left.unsqueeze(1), vision_emb_front.unsqueeze(1), vision_emb_right.unsqueeze(1)], dim=1)  # (B, 3, 512)

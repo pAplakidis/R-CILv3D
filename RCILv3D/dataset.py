@@ -207,18 +207,10 @@ class CarlaDataset(Dataset):
           front_image = self.load_image(self.front_images[idx+i])
           right_image = self.load_image(self.right_images[idx+i])
 
-        mean = torch.tensor(self._imagenet_mean, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
-        std = torch.tensor(self._imagenet_std, dtype=left_image.dtype, device=left_image.device).view(-1, 1, 1)
-
         if self.inference:
           left_images_disp.append(left_image_disp)
           front_images_disp.append(front_image_disp)
           right_images_disp.append(right_image_disp)
-
-        if self.use_imagenet_norm:
-          left_image = (left_image - mean) / std
-          front_image = (front_image - mean) / std
-          right_image = (right_image - mean) / std
 
         left_images.append(left_image)
         front_images.append(front_image)
