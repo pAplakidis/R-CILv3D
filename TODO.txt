@@ -1,6 +1,0 @@
-- input future commands for N steps (e.g. 10)
-- output/predict 5 controls timesteps instead of 2: linear(targets * 5) => output + GT reshape (5, 2) => (5*steer + 5*pedal_acc) (inference should only show the first/next step)
-- previous targets as inputs (like MPC) + residual connection like commands - optional: use gated residual connections (tft) -> variable selection network: vehicle inputs => linear layer (+skip to add&norm) => ELU => linear => gate (sigmoid-like function) => add(residual connection) & (optional)layer norm
-architecture from [ https://arxiv.org/pdf/1912.09363 ] (1 LSTM layer only)
-- auto-balance data distribution for steering output
-- normalization for steering (standard scaling or mini max [0, 1] -> centered at 0.5)
