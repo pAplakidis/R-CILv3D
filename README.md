@@ -27,3 +27,5 @@ NOTE: change config.py and rcilv3d.py/CILv3DConfig accordingly
 ```bash
 MODEL_PATH=<model_load_path> TOWN=<town_idx> EPISODE=<episode_idx> ./inference.py
 ```
+
+![RCILv3D inference in CARLA](inference-carla-dpgan.png)
